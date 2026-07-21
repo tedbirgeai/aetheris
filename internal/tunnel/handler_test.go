@@ -20,11 +20,11 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/tedbirge-labs/aetheris-gateway/internal/meter"
-	"github.com/tedbirge-labs/aetheris-gateway/internal/middleware"
-	"github.com/tedbirge-labs/aetheris-gateway/internal/router"
-	"github.com/tedbirge-labs/aetheris-gateway/internal/store"
-	"github.com/tedbirge-labs/aetheris-gateway/internal/tunnel"
+	"github.com/tedbirgeai/aetheris/internal/meter"
+	"github.com/tedbirgeai/aetheris/internal/middleware"
+	"github.com/tedbirgeai/aetheris/internal/router"
+	"github.com/tedbirgeai/aetheris/internal/store"
+	"github.com/tedbirgeai/aetheris/internal/tunnel"
 )
 
 const (

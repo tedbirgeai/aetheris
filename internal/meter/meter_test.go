@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/tedbirge-labs/aetheris-gateway/internal/store"
+	"github.com/tedbirgeai/aetheris/internal/store"
 )
 
 // TestMeterDelegatesToStore, meter'in kendi kalicilik mantigi

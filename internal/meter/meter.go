@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/tedbirge-labs/aetheris-gateway/internal/store"
+	"github.com/tedbirgeai/aetheris/internal/store"
 )
 
 type Meter struct {

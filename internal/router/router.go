@@ -28,7 +28,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/tedbirge-labs/aetheris-gateway/internal/carrier"
+	"github.com/tedbirgeai/aetheris/internal/carrier"
 )
 
 var (

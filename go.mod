@@ -1,4 +1,4 @@
-module github.com/tedbirge-labs/aetheris-gateway
+module github.com/tedbirgeai/aetheris
 
 go 1.26.5
 

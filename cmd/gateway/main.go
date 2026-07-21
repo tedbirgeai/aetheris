@@ -17,12 +17,12 @@ import (
 	// kod dogrudan bu pakete bagimli degildir, bu yuzden bos import.
 	_ "github.com/lib/pq"
 
-	"github.com/tedbirge-labs/aetheris-gateway/internal/config"
-	"github.com/tedbirge-labs/aetheris-gateway/internal/meter"
-	"github.com/tedbirge-labs/aetheris-gateway/internal/middleware"
-	"github.com/tedbirge-labs/aetheris-gateway/internal/router"
-	"github.com/tedbirge-labs/aetheris-gateway/internal/store"
-	"github.com/tedbirge-labs/aetheris-gateway/internal/tunnel"
+	"github.com/tedbirgeai/aetheris/internal/config"
+	"github.com/tedbirgeai/aetheris/internal/meter"
+	"github.com/tedbirgeai/aetheris/internal/middleware"
+	"github.com/tedbirgeai/aetheris/internal/router"
+	"github.com/tedbirgeai/aetheris/internal/store"
+	"github.com/tedbirgeai/aetheris/internal/tunnel"
 )
 
 func main() {

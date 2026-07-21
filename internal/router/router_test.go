@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tedbirge-labs/aetheris-gateway/internal/carrier"
+	"github.com/tedbirgeai/aetheris/internal/carrier"
 )
 
 func mustURL(t *testing.T, raw string) *url.URL {
