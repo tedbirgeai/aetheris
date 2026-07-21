@@ -1,0 +1,34 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: aetheris
+      POSTGRES_PASSWORD: aetheris
+      POSTGRES_DB: aetheris
+    ports:
+      - "5432:5432"
+    volumes:
+      - aetheris_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aetheris"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  gateway:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      AETHERIS_LISTEN: ":8080"
+      AETHERIS_STORE: "postgres"
+      AETHERIS_DATABASE_DSN: "postgres://aetheris:aetheris@postgres:5432/aetheris?sslmode=disable"
+      AETHERIS_API_KEYS: "${AETHERIS_API_KEYS}"
+      AETHERIS_RECEIPT_SECRET: "${AETHERIS_RECEIPT_SECRET}"
+      AETHERIS_ROUTES: "${AETHERIS_ROUTES:-}"
+    ports:
+      - "8080:8080"
+
+volumes:
+  aetheris_pgdata:

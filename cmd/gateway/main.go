@@ -1,3 +1,4 @@
+// Aetheris Enterprise Gateway - giris noktasi.
 package main
 
 import (
@@ -10,44 +11,82 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
+
+	// PostgreSQL surucusu. Yalnizca database/sql'e kendini kaydeder;
+	// kod dogrudan bu pakete bagimli degildir, bu yuzden bos import.
+	_ "github.com/lib/pq"
 
 	"github.com/tedbirge-labs/aetheris-gateway/internal/config"
 	"github.com/tedbirge-labs/aetheris-gateway/internal/meter"
 	"github.com/tedbirge-labs/aetheris-gateway/internal/middleware"
+	"github.com/tedbirge-labs/aetheris-gateway/internal/router"
+	"github.com/tedbirge-labs/aetheris-gateway/internal/store"
 	"github.com/tedbirge-labs/aetheris-gateway/internal/tunnel"
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
 
+	if err := run(logger); err != nil {
+		logger.Error("gecit baslatilamadi", "err", err)
+		os.Exit(1)
+	}
+}
+
+func run(logger *slog.Logger) error {
 	cfg, err := config.Load()
 	if err != nil {
-		logger.Error("konfigurasyon gecersiz, sunucu baslatilmadi", "err", err)
-		os.Exit(1)
+		return err
 	}
 
 	receiptSecret, err := loadReceiptSecret(logger)
 	if err != nil {
-		logger.Error("makbuz imza anahtari hazirlanamadi", "err", err)
-		os.Exit(1)
+		return err
 	}
 
-	m := meter.New()
+	startCtx, cancelStart := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelStart()
+
+	st, err := buildStore(startCtx, cfg, logger)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if cerr := st.Close(); cerr != nil {
+			logger.Error("store kapatilamadi", "err", cerr)
+		}
+	}()
+
+	m := meter.New(st)
+
+	routes := make([]router.Route, 0, len(cfg.Routes))
+	for _, rc := range cfg.Routes {
+		routes = append(routes, router.Route{Name: rc.Name, Kind: rc.Kind, Upstream: rc.Upstream})
+	}
+	rtr := router.New(routes, cfg.ForwardTimeout)
 
 	h := &tunnel.Handler{
 		Meter:           m,
+		Router:          rtr,
 		Logger:          logger,
 		MaxPayloadBytes: cfg.MaxPayloadBytes,
 		ReceiptSecret:   receiptSecret,
 	}
 
 	limiter := middleware.NewRateLimiter(cfg.RateLimitPerMin, cfg.RateLimitBurst)
+	defer limiter.Stop()
 
+	// Zincir sirasi: Recover -> Logging -> Auth -> RateLimit
+	// Logging, Auth'un DISINDA; boylece basarisiz kimlik denemeleri (401)
+	// de loglanir. Istemci kimligi holder deseniyle Logging'e ulasir.
 	protected := func(next http.HandlerFunc) http.Handler {
 		return middleware.Chain(next,
 			middleware.Recover(logger),
-			middleware.Auth(cfg.APIKeys),
 			middleware.Logging(logger),
+			middleware.Auth(cfg.APIKeys),
 			limiter.Middleware,
 		)
 	}
@@ -55,7 +94,8 @@ func main() {
 	mux := http.NewServeMux()
 	mux.Handle("/api/v1/tunnel", protected(h.Tunnel))
 	mux.Handle("/api/v1/meter/me", protected(h.MyUsage))
-	mux.Handle("/healthz", middleware.Chain(http.HandlerFunc(h.Health), middleware.Recover(logger)))
+	mux.Handle("/healthz", middleware.Chain(http.HandlerFunc(h.Health),
+		middleware.Recover(logger)))
 
 	srv := &http.Server{
 		Addr:         cfg.Listen,
@@ -70,6 +110,8 @@ func main() {
 		logger.Info("Aetheris Gateway aktif",
 			"listen", cfg.Listen,
 			"clients", len(cfg.APIKeys),
+			"store", st.Kind(),
+			"routes", len(routes),
 			"max_payload_bytes", cfg.MaxPayloadBytes,
 		)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -82,28 +124,54 @@ func main() {
 
 	select {
 	case err := <-errCh:
-		logger.Error("sunucu kritik hatayla durdu", "err", err)
-		os.Exit(1)
+		return err
 	case <-ctx.Done():
-		logger.Info("kapatma sinyali alindi, acik istekler bekleniyor", "grace", cfg.ShutdownGrace.String())
+		logger.Info("kapatma sinyali alindi, acik istekler bekleniyor",
+			"grace", cfg.ShutdownGrace.String())
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownGrace)
 	defer cancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		logger.Error("zarif kapatma basarisiz", "err", err)
-		os.Exit(1)
+		return err
 	}
 
-	snap := m.Snapshot()
-	logger.Info("kapatildi",
-		"total_bytes_in", snap.TotalBytesIn,
-		"total_bytes_out", snap.TotalBytesOut,
-		"total_requests", snap.TotalRequests,
-	)
+	snapCtx, snapCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer snapCancel()
+	if snap, serr := m.Snapshot(snapCtx); serr == nil {
+		logger.Info("kapatildi",
+			"total_bytes_in", snap.TotalBytesIn,
+			"total_bytes_out", snap.TotalBytesOut,
+			"total_requests", snap.TotalRequests,
+		)
+	} else {
+		logger.Warn("kapanis ozeti alinamadi", "err", serr)
+	}
+	return nil
 }
 
+// buildStore, konfigurasyona gore kalicilik katmanini secer.
+func buildStore(ctx context.Context, cfg *config.Config, logger *slog.Logger) (store.Store, error) {
+	switch cfg.StoreKind {
+	case "postgres":
+		st, err := store.NewPostgres(ctx, "postgres", cfg.DatabaseDSN)
+		if err != nil {
+			return nil, err
+		}
+		logger.Info("kalici defter aktif", "store", "postgres")
+		return st, nil
+	default:
+		logger.Warn("BELLEK ICI DEFTER AKTIF - sunucu yeniden baslarsa " +
+			"tum tuketim kaydi silinir. Faturalama icin AETHERIS_STORE=postgres kullanin.")
+		return store.NewMemory(), nil
+	}
+}
+
+// loadReceiptSecret, imza anahtarini ortamdan okur.
+// Tanimli degilse gecici anahtar uretir ve UYARI verir - uretimde bu
+// anahtar kalici olmalidir, aksi halde yeniden baslatmada eski
+// makbuzlar dogrulanamaz.
 func loadReceiptSecret(logger *slog.Logger) ([]byte, error) {
 	raw := os.Getenv("AETHERIS_RECEIPT_SECRET")
 	if raw != "" {
@@ -116,7 +184,9 @@ func loadReceiptSecret(logger *slog.Logger) ([]byte, error) {
 		}
 		return secret, nil
 	}
-	logger.Warn("AETHERIS_RECEIPT_SECRET tanimsiz - gecici anahtar uretiliyor. URETIMDE KULLANMAYIN.")
+
+	logger.Warn("AETHERIS_RECEIPT_SECRET tanimsiz - gecici anahtar uretiliyor. " +
+		"URETIMDE KULLANMAYIN: yeniden baslatmada eski makbuzlar dogrulanamaz.")
 	secret := make([]byte, 32)
 	if _, err := rand.Read(secret); err != nil {
 		return nil, err
