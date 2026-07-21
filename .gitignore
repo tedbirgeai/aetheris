@@ -1,0 +1,11 @@
+/bin/
+/aetheris
+/gateway.exe
+*.exe
+.env
+.env.local
+*.pem
+*.key
+*.test
+*.out
+coverage.html
