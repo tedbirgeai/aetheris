@@ -96,6 +96,13 @@ Canlı doğrulama (gerçek çıktı):
 PostgreSQL 16 + Redis 7 + Gateway. Sağlık kontrolleri, kalıcı volume'ler
 (pgdata, redisdata, wal), `restart: unless-stopped`.
 
+**WAL volume sahipliği — dikkat:** Gateway `distroless:nonroot` (uid 65532)
+olarak çalışır. Docker, boş bir named volume'ü üzerine bindiği imaj dizininin
+sahipliğiyle başlatır; bu yüzden `Dockerfile` `/wal` dizinini `--chown=65532:65532`
+ile oluşturur. Bu satır silinirse volume root'a ait olur ve gateway
+`permission denied` ile sürekli yeniden başlar. Volume bir kez yanlış
+sahiplikle oluştuysa `docker compose down -v` ile silinmelidir.
+
 ---
 
 ## Sıfır-Bilgi Sözleşmesi
