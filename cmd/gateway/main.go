@@ -54,6 +54,18 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	// WAL katmani: etkinse store'u dayanikli kuyrukla sar.
+	if cfg.WALEnabled {
+		wal, werr := store.NewWAL(startCtx, st, store.WALConfig{
+			Dir:    cfg.WALDir,
+			Logger: logger,
+		})
+		if werr != nil {
+			return werr
+		}
+		logger.Info("WAL dayanikli kuyruk aktif", "dir", cfg.WALDir)
+		st = wal
+	}
 	defer func() {
 		if cerr := st.Close(); cerr != nil {
 			logger.Error("store kapatilamadi", "err", cerr)
@@ -68,15 +80,50 @@ func run(logger *slog.Logger) error {
 	}
 	rtr := router.New(routes, cfg.ForwardTimeout)
 
+	// Failover prober: etkinse ve rota varsa, arka planda saglik yoklar.
+	var prober *router.HealthProber
+	if cfg.HealthProbeEnabled && rtr.Enabled() {
+		prober = router.NewHealthProber(rtr, router.ProberConfig{
+			Interval: cfg.HealthProbeInterval,
+			Logger:   logger,
+		})
+		prober.Start()
+		defer prober.Stop()
+		logger.Info("rota saglik yoklamasi aktif", "interval", cfg.HealthProbeInterval.String())
+	}
+
 	h := &tunnel.Handler{
 		Meter:           m,
 		Router:          rtr,
+		Prober:          prober,
 		Logger:          logger,
 		MaxPayloadBytes: cfg.MaxPayloadBytes,
 		ReceiptSecret:   receiptSecret,
 	}
 
-	limiter := middleware.NewRateLimiter(cfg.RateLimitPerMin, cfg.RateLimitBurst)
+	// Rate limiter: Redis adresi tanimliysa dagitik, degilse bellek-ici.
+	// Redis'e baglanılamazsa bellek-iciye duser (fail-open kurulum).
+	var limiter middleware.Limiter
+	if cfg.RedisAddr != "" {
+		rl, rerr := middleware.NewRedisLimiter(startCtx, middleware.RedisLimiterConfig{
+			Addr:      cfg.RedisAddr,
+			Password:  cfg.RedisPassword,
+			DB:        cfg.RedisDB,
+			PerMinute: cfg.RateLimitPerMin,
+			Burst:     cfg.RateLimitBurst,
+			Logger:    logger,
+		})
+		if rerr != nil {
+			logger.Warn("Redis rate limiter kurulamadi, bellek-ici limiter kullanilacak",
+				"addr", cfg.RedisAddr, "err", rerr)
+			limiter = middleware.NewRateLimiter(cfg.RateLimitPerMin, cfg.RateLimitBurst)
+		} else {
+			logger.Info("dagitik Redis rate limiter aktif", "addr", cfg.RedisAddr)
+			limiter = rl
+		}
+	} else {
+		limiter = middleware.NewRateLimiter(cfg.RateLimitPerMin, cfg.RateLimitBurst)
+	}
 	defer limiter.Stop()
 
 	// Zincir sirasi: Recover -> Logging -> Auth -> RateLimit

@@ -93,7 +93,34 @@ func TestParseRoutesRejectsInvalid(t *testing.T) {
 	}
 }
 
+// clearEnv, testin miras alinan ortam degiskenlerinden ETKILENMEMESINI
+// saglar. Gelistiricinin kabuginda AETHERIS_LISTEN gibi bir degisken
+// export edilmisse, hermetik olmayan bir test sahte basarisizlik verir.
+// t.Setenv, test bitiminde otomatik geri alir.
+func clearEnv(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{
+		"AETHERIS_LISTEN",
+		"AETHERIS_API_KEYS",
+		"AETHERIS_RECEIPT_SECRET",
+		"AETHERIS_STORE",
+		"AETHERIS_DATABASE_DSN",
+		"AETHERIS_ROUTES",
+		"AETHERIS_MAX_PAYLOAD_BYTES",
+		"AETHERIS_RATE_LIMIT_PER_MIN",
+		"AETHERIS_RATE_LIMIT_BURST",
+		"AETHERIS_REDIS_ADDR",
+		"AETHERIS_WAL_ENABLED",
+		"AETHERIS_WAL_DIR",
+		"AETHERIS_HEALTHPROBE",
+		"AETHERIS_FORWARD_TIMEOUT_SEC",
+	} {
+		t.Setenv(k, "")
+	}
+}
+
 func TestLoadRejectsPostgresWithoutDSN(t *testing.T) {
+	clearEnv(t)
 	t.Setenv("AETHERIS_API_KEYS", "acme:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	t.Setenv("AETHERIS_STORE", "postgres")
 	t.Setenv("AETHERIS_DATABASE_DSN", "")
@@ -108,6 +135,7 @@ func TestLoadRejectsPostgresWithoutDSN(t *testing.T) {
 }
 
 func TestLoadRejectsUnknownStore(t *testing.T) {
+	clearEnv(t)
 	t.Setenv("AETHERIS_API_KEYS", "acme:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	t.Setenv("AETHERIS_STORE", "mongodb")
 
@@ -117,6 +145,7 @@ func TestLoadRejectsUnknownStore(t *testing.T) {
 }
 
 func TestLoadDefaults(t *testing.T) {
+	clearEnv(t)
 	t.Setenv("AETHERIS_API_KEYS", "acme:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	t.Setenv("AETHERIS_STORE", "")
 	t.Setenv("AETHERIS_ROUTES", "")
@@ -142,6 +171,7 @@ func TestLoadDefaults(t *testing.T) {
 // TestLoadRejectsMissingKeys, hicbir anahtar tanimlanmadiginda sunucunun
 // AYAGA KALKMAMASINI dogrular. Acik bir gecit, gecit degildir.
 func TestLoadRejectsMissingKeys(t *testing.T) {
+	clearEnv(t)
 	t.Setenv("AETHERIS_API_KEYS", "")
 	if _, err := Load(); err == nil {
 		t.Fatal("anahtarsiz konfigurasyon kabul edildi")

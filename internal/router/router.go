@@ -50,6 +50,11 @@ type Route struct {
 	Name     string
 	Kind     string // "direct" | "edge" | "peering"
 	Upstream *url.URL
+	// Backup, bu rota sagliksizken denenecek yedek rotanin adi (opsiyonel).
+	// Bos ise ve rota sagliksizsa "direct" hatta dusulur (varsa).
+	Backup string
+	// HealthPath, saglik kontrolu icin GET atilacak yol. Bos ise "/healthz".
+	HealthPath string
 }
 
 // Result, basarili bir yonlendirmenin sonucudur.

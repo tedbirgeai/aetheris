@@ -35,6 +35,21 @@ type Config struct {
 	Routes []RouteConfig
 	// ForwardTimeout, tek bir yonlendirme isteginin azami suresi.
 	ForwardTimeout time.Duration
+
+	// --- v0.3a: Redis dagitik rate limiter ---
+	// RedisAddr bos ise bellek-ici limiter kullanilir.
+	RedisAddr     string
+	RedisPassword string
+	RedisDB       int
+
+	// --- v0.3a: WAL dayanikli kuyruk ---
+	// WALEnabled true ise store, WAL katmaniyla sarilir.
+	WALEnabled bool
+	WALDir     string
+
+	// --- v0.3a: Rota failover / saglik kontrolu ---
+	HealthProbeEnabled  bool
+	HealthProbeInterval time.Duration
 }
 
 // RouteConfig, tek bir yonlendirme hedefidir.
@@ -64,6 +79,16 @@ func Load() (*Config, error) {
 		StoreKind:       strings.ToLower(getEnv("AETHERIS_STORE", "memory")),
 		DatabaseDSN:     os.Getenv("AETHERIS_DATABASE_DSN"),
 		ForwardTimeout:  secs("AETHERIS_FORWARD_TIMEOUT_SEC", 20),
+
+		RedisAddr:     strings.TrimSpace(os.Getenv("AETHERIS_REDIS_ADDR")),
+		RedisPassword: os.Getenv("AETHERIS_REDIS_PASSWORD"),
+		RedisDB:       getEnvInt("AETHERIS_REDIS_DB", 0),
+
+		WALEnabled: strings.EqualFold(getEnv("AETHERIS_WAL_ENABLED", "false"), "true"),
+		WALDir:     getEnv("AETHERIS_WAL_DIR", "./wal"),
+
+		HealthProbeEnabled:  strings.EqualFold(getEnv("AETHERIS_HEALTHPROBE", "false"), "true"),
+		HealthProbeInterval: secs("AETHERIS_HEALTHPROBE_INTERVAL_SEC", 10),
 	}
 
 	keys, err := parseAPIKeys(os.Getenv("AETHERIS_API_KEYS"))

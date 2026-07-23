@@ -1,6 +1,6 @@
 GO ?= go
 
-.PHONY: build test race cover vet fmt run docker up down integration clean
+.PHONY: build test race lint fmt vet cover check run docker up down integration integration-redis clean
 
 build:
 	$(GO) build -trimpath -ldflags="-s -w" -o bin/aetheris ./cmd/gateway
@@ -17,9 +17,13 @@ test:
 race:
 	$(GO) test -race -count=1 ./...
 
-# Canli PostgreSQL gerektirir. AETHERIS_TEST_DSN tanimli olmali.
+# Canli PostgreSQL gerektirir: AETHERIS_TEST_DSN tanimli olmali.
 integration:
 	$(GO) test -race -count=1 -tags=integration ./internal/store/
+
+# Canli Redis gerektirir: AETHERIS_TEST_REDIS tanimli olmali.
+integration-redis:
+	$(GO) test -race -count=1 ./internal/middleware/
 
 cover:
 	$(GO) test -race -coverprofile=coverage.out ./...
@@ -41,4 +45,4 @@ down:
 	docker compose down
 
 clean:
-	rm -rf bin coverage.out coverage.html
+	rm -rf bin coverage.out coverage.html wal

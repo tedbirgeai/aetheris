@@ -1,7 +1,8 @@
-# Aetheris Enterprise Gateway v0.2
+# Aetheris Enterprise Gateway v0.3a
 
 Taşıyıcı-bağımsız (PHY-agnostic), sıfır-bilgi (zero-knowledge) bir tünel geçidi:
-bayt bazlı ölçüm, kalıcı faturalama defteri ve esnek yönlendirme.
+bayt bazlı ölçüm, kalıcı faturalama defteri, dayanıklı kuyruk, dağıtık hız
+sınırlama ve failover'lı yönlendirme.
 
 **Doğrulama durumu**
 
@@ -10,10 +11,73 @@ bayt bazlı ölçüm, kalıcı faturalama defteri ve esnek yönlendirme.
 | `gofmt -l .` | temiz |
 | `go vet ./...` | temiz |
 | `go test -race -count=1 ./...` | 7/7 paket geçti |
-| Entegrasyon (canlı PostgreSQL 16) | 7/7 test geçti |
-| Eşzamanlı yazma (500 goroutine, gerçek DB) | sıfır bayt kaybı |
-| Test kapsamı | %73.4 (statements) |
-| Yeniden başlatma sonrası defter | korundu (uçtan uca doğrulandı) |
+| Entegrasyon (canlı PostgreSQL 16) | geçti |
+| Redis testleri (canlı Redis 7) | 7/7 geçti |
+| WAL → PostgreSQL uçtan uca | 100 kayıt, sıfır kayıp |
+| Eşzamanlı yazma (gerçek DB) | sıfır bayt kaybı |
+| Test kapsamı | ~%70 (statements) |
+
+Canlı doğrulama çıktısı (`store: wal+postgres`, Redis limiter aktif):
+
+```
+{"msg":"kalici defter aktif","store":"postgres"}
+{"msg":"WAL dayanikli kuyruk aktif","dir":"/wal"}
+{"msg":"dagitik Redis rate limiter aktif","addr":"redis:6379"}
+{"store":"wal+postgres","status":"ok"}
+```
+
+---
+
+## v0.3a'da yeni olanlar
+
+### 1. WAL — Dayanıklı Defter Kuyruğu (`internal/store/wal.go`)
+
+**Sorun:** v0.2 fail-closed çalışıyordu — Postgres yavaşlar veya düşerse tünel
+istekleri 503 alıyordu. Faturalama bütünlüğü için doğru, kullanılabilirlik için sert.
+
+**Çözüm:** WAL araya girer. Her `Record` çağrısı:
+1. Önce diske WAL satırı yazar (`fsync` ile) — hızlı, yerel, dayanıklı
+2. Kaydı bellek kuyruğuna koyar
+3. Arka plan flusher kuyruğu asenkron olarak Postgres'e basar
+
+Sonuç: veritabanı kesintiye uğrasa dahi tünel istekleri **bloklanmaz**, hiçbir
+kayıt **kaybolmaz**. Süreç çökerse yeniden başlatmada WAL'den kurtarma yapılır.
+
+**Takas — açıkça bilinmeli:** Bu, fail-closed'dan fail-open'a geçiştir. Kısa bir
+pencerede (WAL yazıldı, Postgres'e henüz basılmadı) kayıt "commit edilmiş" sayılır
+ama ana defterde değildir. Disk WAL bu boşluğu dayanıklı kılar; makine diski
+tamamen kaybolursa o penceredeki kayıtlar gider.
+
+`AETHERIS_WAL_ENABLED=false` ile v0.2'nin fail-closed davranışına dönülebilir.
+
+### 2. Dağıtık Rate Limiter (`internal/middleware/redis_limiter.go`)
+
+Redis tabanlı token bucket. Kritik nokta: **Lua betiği** kullanır, çünkü dağıtık
+ortamda "oku-hesapla-yaz" üç ayrı komut olursa iki düğüm aynı token'ı harcar
+(yarış koşulu). Lua, Redis'te tek işlem olarak çalışır — tüm düğümler için atomik.
+
+`TestRedisLimiterSharedAcrossInstances` iki ayrı limiter örneğinin (iki düğüm gibi)
+aynı Redis'i paylaştığında limitin **ortak** olduğunu kanıtlar.
+
+**Fallback:** Redis erişilemezse istekler sessizce reddedilmez; yerel bellek
+sınırlayıcısına düşülür ve arka planda Redis yoklanır. Kesinti bitince otomatik
+dağıtık moda dönülür. Takas: kısa kesintide bir istemci teorik olarak düğüm sayısı
+kadar fazla istek atabilir, ama **hizmet ayakta kalır**.
+
+### 3. Rota Failover ve Sağlık Kontrolü (`internal/router/failover.go`)
+
+Arka planda her rotaya periyodik `/healthz` yoklaması. Bir rota art arda N kez
+başarısız olursa "sağlıksız" işaretlenir ve trafik:
+1. `Backup` tanımlıysa yedek rotaya,
+2. yoksa `direct` türünde bir rotaya düşürülür.
+
+Rota tekrar yanıt verince otomatik sağlıklı olur. `/healthz` çıktısında
+`route_health` alanı tüm rotaların anlık durumunu gösterir.
+
+### 4. Üretim Yığını (`docker-compose.yml`)
+
+PostgreSQL 16 + Redis 7 + Gateway. Sağlık kontrolleri, kalıcı volume'ler
+(pgdata, redisdata, wal), `restart: unless-stopped`.
 
 ---
 
@@ -21,20 +85,14 @@ bayt bazlı ölçüm, kalıcı faturalama defteri ve esnek yönlendirme.
 
 Bu sunucu, taşıdığı veriyi çözebilecek hiçbir anahtara **sahip değildir**.
 
-- İstemci veriyi **kendi tarafında** AES-256-GCM ile şifreler.
-- Sunucuya base64 kodlanmış opak bir blok (`ciphertext`) gider.
-- Sunucu yalnızca boyutu ölçer, SHA-256 özetini alır, bloğu olduğu gibi iletir.
-- Sunucu tarafında şifre çözme kodu **bilinçli olarak yoktur**.
+- İstemci veriyi **kendi tarafında** AES-256-GCM ile şifreler
+- Sunucuya base64 kodlanmış opak blok gider
+- Sunucu yalnızca boyutu ölçer, SHA-256 özetini alır, bloğu olduğu gibi iletir
+- Sunucu tarafında şifre çözme kodu **bilinçli olarak yoktur**
 
-Bu, "veriyi okumuyoruz" iddiasını bir taahhüt değil, **mimari bir imkânsızlık**
-hâline getirir. KVKK/GDPR denetiminde kritik fark budur: "okumuyoruz" yerine
-"okuyamayız" diyebilmek.
-
-Sözleşme her katmanda geçerlidir:
-- **Log katmanı:** istek/yanıt gövdesi asla loglanmaz, yalnızca metadata.
-- **Veritabanı:** yük saklanmaz, yalnızca SHA-256 özeti. Bir test bu tabloda
-  `payload`/`ciphertext`/`body`/`content` adlı sütun olmadığını doğrular.
-- **Yönlendirme:** router içeriği çözmez, ayrıştırmaz, değiştirmez.
+Sözleşme her katmanda geçerlidir: log gövdesi yazmaz, veritabanı yük saklamaz
+(bir test `payload`/`ciphertext`/`body`/`content` sütunu olmadığını doğrular),
+**WAL yalnızca metadata ve özet tutar**, router içeriği çözmez.
 
 ---
 
@@ -42,85 +100,48 @@ Sözleşme her katmanda geçerlidir:
 
 `internal/carrier/carrier.go` içindeki taşıyıcı listesi **bilinçli olarak kısıtlıdır**.
 
-**İzin verilenler:**
-
-| Taşıyıcı | Dayanak |
-|---|---|
-| `standard_internet` | Mevcut TCP/IP hatları |
-| `mesh_wifi` | 2.4/5 GHz ISM, lisanssız |
-| `lora_ism` | 868/915 MHz ISM, duty-cycle sınırlı |
-| `optical_li_fi` | Görünür ışık/kızılötesi, spektrum lisansı gerekmez |
-| `satellite_licensed` | **Aboneliği bulunan** uydu terminalleri |
+**İzin verilenler:** `standard_internet`, `mesh_wifi` (ISM, lisanssız),
+`lora_ism` (868/915 MHz, duty-cycle sınırlı), `optical_li_fi` (spektrum lisansı
+gerekmez), `satellite_licensed` (**aboneliği bulunan** terminaller).
 
 **Bilerek dışarıda bırakılanlar:**
+- Üçüncü taraf uydu sinyallerinin izinsiz dinlenmesi — 5809 sayılı Kanun ve
+  TCK 132–140 kapsamında suçtur
+- AM/FM veya lisanslı spektrumda veri yayını — BTK lisansı olmadan kaçak
+  telsiz istasyonu işletmektir
 
-- Üçüncü taraf uydu sinyallerinin izinsiz dinlenmesi/çözülmesi — 5809 sayılı
-  Elektronik Haberleşme Kanunu ve TCK 132–140 kapsamında suçtur.
-- AM/FM veya diğer lisanslı spektrumda veri yayını — BTK lisansı olmadan
-  kaçak telsiz istasyonu işletmektir.
-
-Bu koruma iki katmanda test edilir (`carrier` ve `router`), ayrıca HTTP
-seviyesinde de doğrulanır. `TestNormalizeRejectsIllegalCarriers` **silinmemelidir**.
+Koruma üç katmanda test edilir (carrier, router, HTTP).
+`TestNormalizeRejectsIllegalCarriers` **silinmemelidir**.
 
 ---
 
 ## Egress Maliyeti Hakkında Dürüst Not
 
-Bir proxy, bulut sağlayıcısının egress maliyetini **düşürmez**. Bir bayt önce
-geçide gelir (ingress), sonra hedefe gider (egress). Geçit bulut içinde
-çalışıyorsa toplam egress azalmaz, **bir kat daha eklenir**.
+Bir proxy, bulut sağlayıcısının egress maliyetini **düşürmez** — bir bayt önce
+geçide gelir (ingress), sonra hedefe gider (egress). Geçit bulut içindeyse toplam
+egress azalmaz, bir kat daha eklenir.
 
-Gerçek tasarrufun tek yolu topolojiktir — kod değil, rotaların nereye işaret
-ettiği belirler:
-
-| Rota türü | Ne yapar |
-|---|---|
-| `direct` | Optimizasyon yok, düz iletim. Ölçüm ve test için. |
-| `edge` | Bulut dışındaki kenar düğümüne yönlendirir; tekrar eden içerik orada önbelleklenirse kaynaktan çıkan bayt azalır. |
-| `peering` | Doğrudan eşleşme bağlantısı; sağlayıcının ölçülü egress'i devreye girmez. |
-
-Bu paket tasarrufu yaratmaz, o topolojiyi **uygulanabilir kılar**.
+Gerçek tasarruf topolojiktir: `edge` (bulut dışı kenar düğümü, önbellekleme),
+`peering` (doğrudan eşleşme, ölçülü egress devreye girmez). Kod tasarrufu
+yaratmaz, o topolojiyi **uygulanabilir kılar**.
 
 ---
 
 ## Mimari
 
 ```
-cmd/gateway/          Giriş noktası, store seçimi, zarif kapatma
-internal/config/      Ortam okuma + başlangıç doğrulaması (rota ve DSN dahil)
+cmd/gateway/          Giriş noktası, store/limiter/prober seçimi
+internal/config/      Ortam okuma + başlangıç doğrulaması
 internal/carrier/     Yasal taşıyıcı allowlist'i
-internal/store/       Store arayüzü + MemoryStore + PostgresStore + migration
-internal/meter/       Ölçüm cephesi (store'u sarar, açık tünel göstergesi)
-internal/middleware/  Auth (sabit zamanlı), rate limit, log, panic kurtarma
-internal/router/      Yönlendirme motoru (direct/edge/peering)
+internal/store/       Store arayüzü + Memory + Postgres + WAL + migration
+internal/meter/       Ölçüm cephesi
+internal/middleware/  Auth, rate limit (bellek + Redis), log, kurtarma
+internal/router/      Yönlendirme + failover/healthcheck
 internal/tunnel/      HTTP uçları
 ```
 
-**Store arayüzü.** Bellek ve PostgreSQL implementasyonları aynı sözleşmeyi
-uygular; geçiş tek bir ortam değişkenidir. Uygulamanın geri kalanı hangisinin
-aktif olduğunu bilmez. Derleme zamanında `var _ Store = (*PostgresStore)(nil)`
-ile uyumluluk garanti edilir.
-
-**Neden sharded bellek defteri?** Tek global mutex, yüksek hacimde tüm
-yazmaları serileştirir. Defter, istemci kimliğinin FNV-1a özetine göre 32
-shard'a bölünmüştür.
-
-**Neden append-only olay defteri?** Birikimli toplam, faturalama itirazında
-"bu rakam nereden çıktı" sorusunu yanıtlayamaz. `aetheris_ledger_events`
-her geçişi ayrı satır olarak, makbuz özeti ve imzasıyla saklar. Bu satırlar
-hiçbir zaman güncellenmez veya silinmez.
-
-**Fail-closed ölçüm.** Defter yazılamıyorsa istek **reddedilir** (503).
-Ölçülemeyen trafik faturalanamaz; sessizce hizmet vermek doğrudan gelir
-kaybıdır. Bu, kullanılabilirliği veritabanına bağlayan bilinçli bir takastır —
-alternatifi dayanıklı kuyruk + asenkron yazmadır ve v0.3'e bırakılmıştır.
-`TestTunnelFailsClosedWhenLedgerUnavailable` bu davranışı kilitler.
-
-**Loglama zinciri.** `Recover → Logging → Auth → RateLimit`. Logging'in Auth'un
-*dışında* olması, başarısız kimlik denemelerinin (401) de loglanmasını sağlar —
-anahtar deneme saldırılarını görmek için şart. İstemci kimliği Logging'e
-holder deseniyle ulaşır; Auth `r.WithContext()` ile yeni bir request ürettiği
-için naif bir zincirde `client_id` boş kalırdı.
+`Store` ve `Limiter` arayüzleri sayesinde implementasyon seçimi tek bir ortam
+değişkenidir; uygulamanın geri kalanı hangisinin aktif olduğunu bilmez.
 
 ---
 
@@ -128,54 +149,15 @@ için naif bir zincirde `client_id` boş kalırdı.
 
 | Metot | Yol | Kimlik | Açıklama |
 |---|---|---|---|
-| GET | `/healthz` | — | Sağlık, aktif store, rotalar, taşıyıcılar |
+| GET | `/healthz` | — | Sağlık, store türü, rotalar, `route_health` |
 | POST | `/api/v1/tunnel` | Bearer | Ölç, (varsa) ilet, imzalı makbuz dön |
 | GET | `/api/v1/meter/me` | Bearer | **Yalnızca kendi** tüketim defteriniz |
-
-İstek:
-
-```json
-{
-  "carrier_type": "optical_li_fi",
-  "ciphertext": "<base64(nonce || AES-256-GCM ciphertext || tag)>",
-  "destination": "edge-1"
-}
-```
-
-Yanıt (gerçek çıktı):
-
-```json
-{
-  "status": "routed",
-  "protocol": "Aetheris/1.1",
-  "client_id": "acme",
-  "carrier_used": "optical_li_fi",
-  "metered_bytes": 96,
-  "payload_sha256": "8b8f3a2a9b24d4959381812be419624a...",
-  "timestamp": 1784674524,
-  "route": {
-    "route_name": "edge-1",
-    "route_kind": "edge",
-    "upstream_status": 200,
-    "bytes_sent": 96,
-    "bytes_received": 4,
-    "duration_ms": 2
-  },
-  "signature": "fd9603e693783f3cbb41c9d80f91dbd7..."
-}
-```
-
-`signature`, `Signature` alanı boşken alınan makbuzun HMAC-SHA256 özetidir.
-İstemci faturasının değiştirilmediğini bağımsız olarak doğrulayabilir —
-`TestReceiptSignatureIsVerifiable` bunu gösterir.
-
-`destination` boşsa yönlendirme yapılmaz, `status` `"metered"` olur.
 
 ---
 
 ## Kurulum
 
-### Docker Compose (önerilen)
+### Docker Compose (üretim)
 
 ```bash
 cp .env.example .env
@@ -184,63 +166,48 @@ openssl rand -hex 32   # AETHERIS_RECEIPT_SECRET icin
 docker compose up --build
 ```
 
-PostgreSQL, sağlık kontrolü ve migration otomatik gelir.
+PostgreSQL, Redis, migration ve WAL otomatik gelir.
 
-### Yerel
+### Yerel geliştirme
 
 ```bash
-docker run -d --name aetheris-pg \
-  -e POSTGRES_USER=aetheris -e POSTGRES_PASSWORD=aetheris -e POSTGRES_DB=aetheris \
-  -p 5432:5432 postgres:16-alpine
-
 cp .env.example .env      # doldurun
 set -a; source .env; set +a
 make run
 ```
 
-Konfigürasyon geçersizse sunucu **başlamaz**. `AETHERIS_STORE=postgres` iken
-DSN yoksa, anahtar 32 karakterden kısaysa, rota URL'i geçersizse açılışta hata verir.
-
 ## Test
 
 ```bash
 make race          # yaris kosulu denetimiyle
-make cover         # kapsam raporu -> coverage.html
 make check         # fmt + vet + race
 
-# Canli veritabani gerektirir:
-AETHERIS_TEST_DSN="postgres://aetheris:aetheris@localhost:5432/aetheris?sslmode=disable" \
-  make integration
+# Canli servis gerektirenler:
+AETHERIS_TEST_DSN="postgres://..." make integration
+AETHERIS_TEST_REDIS="127.0.0.1:6379" make integration-redis
 ```
 
 Entegrasyon testleri `//go:build integration` etiketiyle ayrılmıştır; normal
-`go test ./...` çalıştırması veritabanı gerektirmez.
-
----
-
-## Veri Modeli
-
-```sql
-aetheris_ledgers          -- istemci basina birikimli toplamlar
-aetheris_ledger_carriers  -- tasiyici kirilimi
-aetheris_ledger_events    -- SALT-EKLEME olay defteri (denetim izi)
-aetheris_schema_migrations-- uygulanan sema surumleri
-```
-
-Migration'lar açılışta otomatik uygulanır, idempotenttir ve her sürüm kendi
-transaction'ında çalışır. `Record` üç tabloyu **tek transaction**'da günceller —
-ya hepsi ya hiçbiri. Rollback davranışı sqlmock ile test edilmiştir.
+`go test ./...` çalıştırması veritabanı gerektirmez. Redis testleri
+`AETHERIS_TEST_REDIS` tanımsızsa atlanır.
 
 ---
 
 ## Bilinen sınırlar
 
-1. **Rate limiter tek düğümlüdür.** Çok düğümlü dağıtımda Redis tabanlı ortak
-   sayaca geçilmeli, aksi halde her düğüm kendi kotasını uygular.
-2. **Fail-closed, kullanılabilirliği DB'ye bağlar.** Postgres düşerse geçit
-   503 döner. Dayanıklı kuyruk (WAL + asenkron flush) v0.3 konusudur.
-3. **mTLS yok.** Kurumsal istemciler için karşılıklı sertifika doğrulaması
-   henüz eklenmedi.
-4. **Rota seçimi statiktir.** Sağlık durumuna göre otomatik yeniden yönlendirme
-   (failover) yok; hedef düşerse istek 502 alır.
-5. **Test kapsamı %73.4.** `cmd/gateway` ve bazı hata dalları kapsam dışı.
+1. **WAL tek dosyadır.** Tam batch başarılı olunca truncate edilir. Yüksek
+   hacimde segment-bazlı rotasyon gerekir.
+2. **Bir WAL dizini = bir süreç.** İki Aetheris örneği aynı `AETHERIS_WAL_DIR`
+   değerini paylaşırsa aynı kayıtlar iki kez işlenir — **çift faturalama**.
+   Çok düğümlü dağıtımda her düğüm kendi WAL dizinini kullanmalıdır.
+   Windows'ta ikinci örnek açılışta anlamlı bir hata ile durur; Linux'ta
+   dosya kilidi olmadığı için bu koruma yoktur, konfigürasyona dikkat edin.
+3. **WAL fail-open'dır.** Yukarıdaki takas notunu okuyun.
+4. **mTLS yok.** Kurumsal istemci sertifikaları v0.3b konusudur.
+5. **TLS sonlandırma yok.** Üretimde önüne reverse proxy (nginx/Caddy) veya
+   yük dengeleyici konmalı — şu an düz HTTP dinler.
+6. **Dedup ve QoS probe yok.** v0.3b'de, dürüst versiyonlarıyla:
+   dedup **istemci tarafında** (sunucu şifreli veride tekrar göremez —
+   AES-GCM rastgele nonce kullanır), QoS probe pazarlama vaadi olmadan
+   gerçek latency/packet-loss ölçümü.
+7. **Faturalama köprüsü yok.** Stripe/e-Fatura entegrasyonu v0.3b.

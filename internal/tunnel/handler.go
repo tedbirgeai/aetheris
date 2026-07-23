@@ -29,6 +29,7 @@ import (
 type Handler struct {
 	Meter           *meter.Meter
 	Router          *router.Router
+	Prober          *router.HealthProber
 	Logger          *slog.Logger
 	MaxPayloadBytes int64
 	ReceiptSecret   []byte
@@ -135,7 +136,20 @@ func (h *Handler) Tunnel(w http.ResponseWriter, r *http.Request) {
 				"yonlendirme devre disi: destination belirtildi ancak rota tanimli degil")
 			return
 		}
-		routeResult, err = h.Router.Forward(r.Context(), req.Destination, clientID, carrierType, opaque)
+		// Failover prober aktifse hedefi cozup (gerekirse yedege dusurup)
+		// oyle yonlendir. Degilse dogrudan Forward.
+		if h.Prober != nil {
+			var failedOver bool
+			routeResult, failedOver, err = h.Prober.ForwardWithFailover(
+				r.Context(), req.Destination, clientID, carrierType, opaque)
+			if failedOver && err == nil {
+				h.Logger.Info("istek failover ile yonlendirildi",
+					"client_id", clientID, "requested", req.Destination,
+					"actual", routeResult.RouteName)
+			}
+		} else {
+			routeResult, err = h.Router.Forward(r.Context(), req.Destination, clientID, carrierType, opaque)
+		}
 		if err != nil {
 			switch {
 			case errors.Is(err, router.ErrNoRoute):
@@ -262,7 +276,7 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 	if h.Router != nil {
 		routes = h.Router.Routes()
 	}
-	h.writeJSON(w, http.StatusOK, map[string]any{
+	body := map[string]any{
 		"status":             "ok",
 		"protocol":           "Aetheris/1.1",
 		"store":              h.Meter.Kind(),
@@ -270,5 +284,9 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 		"uptime_seconds":     h.Meter.UptimeSeconds(),
 		"supported_carriers": carrier.All(),
 		"routes":             routes,
-	})
+	}
+	if h.Prober != nil {
+		body["route_health"] = h.Prober.Status()
+	}
+	h.writeJSON(w, http.StatusOK, body)
 }
