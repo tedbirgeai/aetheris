@@ -177,3 +177,56 @@ func TestLoadRejectsMissingKeys(t *testing.T) {
 		t.Fatal("anahtarsiz konfigurasyon kabul edildi")
 	}
 }
+
+// TestParseRoutesBackupAndHealth, backup ve health seceneklerinin
+// ortam degiskeninden GERCEKTEN okundugunu dogrular.
+//
+// NEDEN KRITIK: router.Route'da Backup alani vardi ama config onu hic
+// parse etmiyordu; yani "yedek rotaya failover" uretimde ULASILAMAZDI.
+// Birim testleri gecmisti cunku Route struct'ini dogrudan kuruyorlardi.
+// Bu test o bosluqu kapatir.
+func TestParseRoutesBackupAndHealth(t *testing.T) {
+	got, err := parseRoutes(
+		"primary=edge@https://a.example;backup=secondary;health=/status," +
+			"secondary=peering@https://b.example," +
+			"fallback=direct@https://c.example")
+	if err != nil {
+		t.Fatalf("hata dondu: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("rota sayisi = %d, beklenen 3", len(got))
+	}
+	if got[0].Backup != "secondary" {
+		t.Fatalf("Backup = %q, beklenen secondary", got[0].Backup)
+	}
+	if got[0].HealthPath != "/status" {
+		t.Fatalf("HealthPath = %q, beklenen /status", got[0].HealthPath)
+	}
+	if got[0].Upstream.Host != "a.example" {
+		t.Fatalf("secenekler URL'i bozdu: %v", got[0].Upstream)
+	}
+	// Secenek verilmeyen rotalarda alanlar bos kalmali.
+	if got[1].Backup != "" || got[1].HealthPath != "" {
+		t.Fatalf("secenek verilmeyen rotada deger var: %+v", got[1])
+	}
+}
+
+// TestParseRoutesRejectsBadBackup, tanimsiz veya kendine isaret eden
+// yedek rotanin ACILISTA reddedildigini dogrular. Sessizce calismayan
+// bir failover, kesinti aninda kesfedilirdi.
+func TestParseRoutesRejectsBadBackup(t *testing.T) {
+	cases := map[string]string{
+		"tanimsiz yedek":   "a=edge@https://a.example;backup=olmayan",
+		"kendine yedek":    "a=edge@https://a.example;backup=a",
+		"bos yedek":        "a=edge@https://a.example;backup=",
+		"gecersiz secenek": "a=edge@https://a.example;sihir=1",
+		"health slash yok": "a=edge@https://a.example;health=status",
+	}
+	for name, raw := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := parseRoutes(raw); err == nil {
+				t.Fatalf("%s icin hata bekleniyordu", name)
+			}
+		})
+	}
+}

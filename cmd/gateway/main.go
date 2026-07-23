@@ -76,7 +76,13 @@ func run(logger *slog.Logger) error {
 
 	routes := make([]router.Route, 0, len(cfg.Routes))
 	for _, rc := range cfg.Routes {
-		routes = append(routes, router.Route{Name: rc.Name, Kind: rc.Kind, Upstream: rc.Upstream})
+		routes = append(routes, router.Route{
+			Name:       rc.Name,
+			Kind:       rc.Kind,
+			Upstream:   rc.Upstream,
+			Backup:     rc.Backup,
+			HealthPath: rc.HealthPath,
+		})
 	}
 	rtr := router.New(routes, cfg.ForwardTimeout)
 

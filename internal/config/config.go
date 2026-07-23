@@ -57,6 +57,11 @@ type RouteConfig struct {
 	Name     string
 	Kind     string // "direct" | "edge" | "peering"
 	Upstream *url.URL
+	// Backup, bu rota sagliksizken denenecek yedek rotanin adi.
+	// Bos ise ve rota sagliksizsa "direct" turunde bir rotaya dusulur.
+	Backup string
+	// HealthPath, saglik yoklamasinda kullanilacak yol. Bos ise "/healthz".
+	HealthPath string
 }
 
 // validRouteKinds, kabul edilen yonlendirme turleridir.
@@ -199,7 +204,40 @@ func parseRoutes(raw string) ([]RouteConfig, error) {
 			return nil, fmt.Errorf("rota %q icin gecersiz tur %q (direct|edge|peering)", name, kind)
 		}
 
-		u, err := url.Parse(strings.TrimSpace(kindAndURL[1]))
+		// URL'den sonra opsiyonel secenekler ';' ile ayrilir:
+		//   ad=tur@url;backup=YEDEK_ROTA_ADI;health=/saglik-yolu
+		parts := strings.Split(kindAndURL[1], ";")
+		rawURL := strings.TrimSpace(parts[0])
+
+		var backup, healthPath string
+		for _, opt := range parts[1:] {
+			opt = strings.TrimSpace(opt)
+			if opt == "" {
+				continue
+			}
+			kv := strings.SplitN(opt, "=", 2)
+			if len(kv) != 2 {
+				return nil, fmt.Errorf("rota %q icin gecersiz secenek %q (beklenen anahtar=deger)", name, opt)
+			}
+			key := strings.ToLower(strings.TrimSpace(kv[0]))
+			val := strings.TrimSpace(kv[1])
+			switch key {
+			case "backup":
+				if val == "" {
+					return nil, fmt.Errorf("rota %q icin bos backup degeri", name)
+				}
+				backup = val
+			case "health":
+				if !strings.HasPrefix(val, "/") {
+					return nil, fmt.Errorf("rota %q icin health yolu '/' ile baslamali, %q verildi", name, val)
+				}
+				healthPath = val
+			default:
+				return nil, fmt.Errorf("rota %q icin bilinmeyen secenek %q (backup|health)", name, key)
+			}
+		}
+
+		u, err := url.Parse(rawURL)
 		if err != nil {
 			return nil, fmt.Errorf("rota %q icin gecersiz url: %w", name, err)
 		}
@@ -210,11 +248,33 @@ func parseRoutes(raw string) ([]RouteConfig, error) {
 			return nil, fmt.Errorf("rota %q icin url host bilgisi eksik", name)
 		}
 
-		out = append(out, RouteConfig{Name: name, Kind: kind, Upstream: u})
+		out = append(out, RouteConfig{
+			Name:       name,
+			Kind:       kind,
+			Upstream:   u,
+			Backup:     backup,
+			HealthPath: healthPath,
+		})
 	}
 
 	if len(out) == 0 {
 		return nil, errors.New("hicbir gecerli rota ayristirilamadi")
+	}
+
+	// Yedek rota adlari GERCEKTEN tanimli olmali. Aksi halde failover
+	// sessizce calismaz — sagliksiz rota yedegine dusmek isterken hedefi
+	// bulamaz ve istek basarisiz olur. Bunu ACILISTA yakalamak,
+	// uretimde kesinti aninda kesfetmekten cok daha ucuzdur.
+	for _, rc := range out {
+		if rc.Backup == "" {
+			continue
+		}
+		if rc.Backup == rc.Name {
+			return nil, fmt.Errorf("rota %q kendini yedek gosteremez", rc.Name)
+		}
+		if _, ok := seen[rc.Backup]; !ok {
+			return nil, fmt.Errorf("rota %q icin tanimsiz yedek rota: %q", rc.Name, rc.Backup)
+		}
 	}
 	return out, nil
 }

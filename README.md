@@ -74,6 +74,23 @@ başarısız olursa "sağlıksız" işaretlenir ve trafik:
 Rota tekrar yanıt verince otomatik sağlıklı olur. `/healthz` çıktısında
 `route_health` alanı tüm rotaların anlık durumunu gösterir.
 
+Yapılandırma (`AETHERIS_ROUTES`):
+
+```
+primary=edge@https://a.example;backup=secondary;health=/status,secondary=peering@https://b.example
+```
+
+`backup` adı tanımlı bir rotaya işaret etmelidir; etmiyorsa sunucu **açılışta
+hata verir**. Sessizce çalışmayan bir failover, kesinti anında keşfedilirdi.
+
+Canlı doğrulama (gerçek çıktı):
+
+```
+{"msg":"rota sagliksiz isaretlendi, failover aktif","route":"primary"}
+{"msg":"failover: yedek rotaya yonlendiriliyor","from":"primary","to":"secondary"}
+{"route_name":"secondary","upstream_status":200}
+```
+
 ### 4. Üretim Yığını (`docker-compose.yml`)
 
 PostgreSQL 16 + Redis 7 + Gateway. Sağlık kontrolleri, kalıcı volume'ler
