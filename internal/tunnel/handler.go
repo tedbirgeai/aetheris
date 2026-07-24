@@ -9,6 +9,7 @@
 package tunnel
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -19,6 +20,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/tedbirgeai/aetheris/internal/billing"
 	"github.com/tedbirgeai/aetheris/internal/carrier"
 	"github.com/tedbirgeai/aetheris/internal/meter"
 	"github.com/tedbirgeai/aetheris/internal/middleware"
@@ -33,6 +35,58 @@ type Handler struct {
 	Logger          *slog.Logger
 	MaxPayloadBytes int64
 	ReceiptSecret   []byte
+
+	// --- v0.3b ---
+	// Billing, fatura olaylarini dis sistemlere ileten kopru (nil olabilir).
+	Billing *billing.Bridge
+	// Credits, role teskik motoru (nil olabilir).
+	Credits *billing.CreditEngine
+	// Thresholds, kullanim esigi izleyici (nil olabilir).
+	Thresholds *billing.ThresholdWatcher
+	// TLSStatus, health ucunda sertifika durumunu bildirmek icin (nil olabilir).
+	TLSStatus func() any
+}
+
+// hmacHex, HMAC-SHA256 imzasini hex olarak dondurur.
+func hmacHex(secret, payload []byte) string {
+	mac := hmac.New(sha256.New, secret)
+	_, _ = mac.Write(payload)
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// publishReceipt, basarili bir olcumu faturalama koprusune bildirir.
+// ASENKRONDUR; istegi bloklamaz.
+func (h *Handler) publishReceipt(clientID, carrierType, destination string,
+	bytesIn, bytesOut uint64, payloadSHA, signature string) {
+
+	if h.Billing == nil {
+		return
+	}
+	// Olay kimligi: ayni makbuzun iki kez faturalanmamasi icin
+	// imzadan turetilir (imza makbuza ozgudur).
+	id := signature
+	if len(id) > 32 {
+		id = id[:32]
+	}
+	h.Billing.Publish(billing.Event{
+		ID:          "receipt-" + id,
+		Type:        billing.ReceiptGenerated,
+		ClientID:    clientID,
+		CarrierType: carrierType,
+		Destination: destination,
+		BytesIn:     bytesIn,
+		BytesOut:    bytesOut,
+		PayloadSHA:  payloadSHA,
+		Signature:   signature,
+		OccurredAt:  time.Now().UTC(),
+	})
+
+	// Kullanim esigi kontrolu.
+	if h.Thresholds != nil {
+		if e, err := h.Meter.ClientUsage(context.Background(), clientID); err == nil {
+			h.Thresholds.Check(clientID, e.BytesIn+e.BytesOut)
+		}
+	}
 }
 
 type TunnelRequest struct {
@@ -215,6 +269,17 @@ func (h *Handler) Tunnel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Faturalama koprusune bildir (asenkron, istegi bloklamaz).
+	h.publishReceipt(clientID, string(carrierType), req.Destination,
+		bytesIn, bytesOut, shaHex, receipt.Signature)
+
+	// Role kredisi: istek baska bir dugume yonlendirildiyse, yonlendiren
+	// musteri kredi kazanir. Kendi trafigini role etmek kredi kazandirmaz
+	// (CreditEngine icinde engellenir).
+	if h.Credits != nil && routeResult != nil {
+		h.Credits.RecordRelay(clientID, req.Destination, routeResult.BytesSent)
+	}
+
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write(body); err != nil {
@@ -287,6 +352,13 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.Prober != nil {
 		body["route_health"] = h.Prober.Status()
+		body["qos"] = h.Prober.QoS()
+	}
+	if h.Billing != nil {
+		body["billing"] = h.Billing.Stats()
+	}
+	if h.TLSStatus != nil {
+		body["tls"] = h.TLSStatus()
 	}
 	h.writeJSON(w, http.StatusOK, body)
 }

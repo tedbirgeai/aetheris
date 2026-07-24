@@ -230,3 +230,94 @@ func TestParseRoutesRejectsBadBackup(t *testing.T) {
 		})
 	}
 }
+
+// --- v0.3b konfigurasyon dogrulamasi ---
+
+func TestTLSConfigValidation(t *testing.T) {
+	cases := map[string]map[string]string{
+		"cert var key yok": {
+			"AETHERIS_TLS_CERT": "/tmp/x.crt",
+		},
+		"key var cert yok": {
+			"AETHERIS_TLS_KEY": "/tmp/x.key",
+		},
+		"mTLS ama TLS yok": {
+			"AETHERIS_TLS_CLIENT_AUTH": "require",
+		},
+		"mTLS ama CA yok": {
+			"AETHERIS_TLS_CERT":        "/tmp/x.crt",
+			"AETHERIS_TLS_KEY":         "/tmp/x.key",
+			"AETHERIS_TLS_CLIENT_AUTH": "require",
+		},
+		"gecersiz auth modu": {
+			"AETHERIS_TLS_CERT":        "/tmp/x.crt",
+			"AETHERIS_TLS_KEY":         "/tmp/x.key",
+			"AETHERIS_TLS_CLIENT_CA":   "/tmp/ca.pem",
+			"AETHERIS_TLS_CLIENT_AUTH": "sihirli",
+		},
+	}
+	for name, env := range cases {
+		t.Run(name, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv("AETHERIS_API_KEYS", "acme:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+			for k, v := range env {
+				t.Setenv(k, v)
+			}
+			if _, err := Load(); err == nil {
+				t.Fatalf("%s: hata bekleniyordu", name)
+			}
+		})
+	}
+}
+
+func TestValidTLSConfigAccepted(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("AETHERIS_API_KEYS", "acme:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	t.Setenv("AETHERIS_TLS_CERT", "/tmp/x.crt")
+	t.Setenv("AETHERIS_TLS_KEY", "/tmp/x.key")
+	t.Setenv("AETHERIS_TLS_CLIENT_CA", "/tmp/ca.pem")
+	t.Setenv("AETHERIS_TLS_CLIENT_AUTH", "require")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("gecerli mTLS konfigurasyonu reddedildi: %v", err)
+	}
+	if cfg.TLSClientAuth != "require" {
+		t.Fatalf("TLSClientAuth = %q", cfg.TLSClientAuth)
+	}
+}
+
+func TestParseThresholds(t *testing.T) {
+	got := parseThresholds("1000, 5000,20000")
+	if len(got) != 3 || got[0] != 1000 || got[2] != 20000 {
+		t.Fatalf("esikler hatali: %v", got)
+	}
+	if parseThresholds("") != nil {
+		t.Fatal("bos girdi nil dondurmedi")
+	}
+	// Gecersiz girdiler sessizce atlanmali, panik olmamali.
+	if got := parseThresholds("abc,0,-5,100"); len(got) != 1 || got[0] != 100 {
+		t.Fatalf("gecersiz esikler ayiklanmadi: %v", got)
+	}
+}
+
+// TestStripeMeterHasDefault, meter adi verilmediginde makul bir
+// varsayilan kullanildigini dogrular.
+//
+// Ilk yazilan surumde burada "meter adi zorunludur" diye bir dogrulama
+// vardi; test onun HIC TETIKLENEMEYECEGINI ortaya cikardi (varsayilan
+// deger bosluğu dolduruyordu). Ulasilamayan dogrulama kaldirildi.
+func TestStripeMeterHasDefault(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("AETHERIS_API_KEYS", "acme:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	t.Setenv("AETHERIS_STRIPE_API_KEY", "sk_test_x")
+	t.Setenv("AETHERIS_STRIPE_METER", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("varsayilan meter adiyla yukleme basarisiz: %v", err)
+	}
+	if cfg.StripeMeterName == "" {
+		t.Fatal("meter adi bos kaldi - varsayilan calismadi")
+	}
+}

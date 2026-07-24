@@ -75,6 +75,7 @@ func newEnv(t *testing.T, st store.Store, rtr *router.Router) *testEnv {
 	keys := map[string]string{testKey: "acme"}
 	mux := http.NewServeMux()
 	mux.Handle("/api/v1/tunnel", middleware.Chain(http.HandlerFunc(h.Tunnel), middleware.Auth(keys)))
+	mux.Handle("/api/v1/tunnel/chunked", middleware.Chain(http.HandlerFunc(h.TunnelChunked), middleware.Auth(keys)))
 	mux.Handle("/api/v1/meter/me", middleware.Chain(http.HandlerFunc(h.MyUsage), middleware.Auth(keys)))
 	mux.Handle("/healthz", http.HandlerFunc(h.Health))
 

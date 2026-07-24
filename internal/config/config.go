@@ -50,6 +50,37 @@ type Config struct {
 	// --- v0.3a: Rota failover / saglik kontrolu ---
 	HealthProbeEnabled  bool
 	HealthProbeInterval time.Duration
+
+	// --- v0.3b: TLS / mTLS ---
+	// TLSCertFile bos ise gecit duz HTTP dinler (yalnizca yerel gelistirme).
+	TLSCertFile string
+	TLSKeyFile  string
+	// TLSClientCAFile ve TLSClientAuth, mTLS icindir.
+	// TLSClientAuth: "" (kapali) | "optional" | "require"
+	TLSClientCAFile string
+	TLSClientAuth   string
+	// TLSReloadInterval, sertifika rotasyon kontrolu araligi.
+	TLSReloadInterval time.Duration
+
+	// --- v0.3b: Faturalama koprusu ---
+	BillingWebhookURL    string
+	BillingWebhookSecret string
+	StripeAPIKey         string
+	StripeMeterName      string
+	EInvoiceURL          string
+	EInvoiceAPIKey       string
+	// CreditPerByte, role edilen bayt basina kazanilan kredi birimi.
+	CreditPerByte float64
+	// CreditMaxPerPeriod, donem basina kredi tavani (0 = sinirsiz).
+	CreditMaxPerPeriod uint64
+	// UsageThresholds, asildiginda olay uretilecek bayt esikleri.
+	UsageThresholds []uint64
+
+	// --- v0.3b: Metrikler ---
+	// MetricsEnabled true ise /metrics ucu acilir (Prometheus formati).
+	MetricsEnabled bool
+	// MetricsToken bos degilse /metrics Bearer token ister.
+	MetricsToken string
 }
 
 // RouteConfig, tek bir yonlendirme hedefidir.
@@ -94,6 +125,25 @@ func Load() (*Config, error) {
 
 		HealthProbeEnabled:  strings.EqualFold(getEnv("AETHERIS_HEALTHPROBE", "false"), "true"),
 		HealthProbeInterval: secs("AETHERIS_HEALTHPROBE_INTERVAL_SEC", 10),
+
+		TLSCertFile:       strings.TrimSpace(os.Getenv("AETHERIS_TLS_CERT")),
+		TLSKeyFile:        strings.TrimSpace(os.Getenv("AETHERIS_TLS_KEY")),
+		TLSClientCAFile:   strings.TrimSpace(os.Getenv("AETHERIS_TLS_CLIENT_CA")),
+		TLSClientAuth:     strings.ToLower(strings.TrimSpace(os.Getenv("AETHERIS_TLS_CLIENT_AUTH"))),
+		TLSReloadInterval: secs("AETHERIS_TLS_RELOAD_SEC", 60),
+
+		BillingWebhookURL:    strings.TrimSpace(os.Getenv("AETHERIS_BILLING_WEBHOOK_URL")),
+		BillingWebhookSecret: os.Getenv("AETHERIS_BILLING_WEBHOOK_SECRET"),
+		StripeAPIKey:         strings.TrimSpace(os.Getenv("AETHERIS_STRIPE_API_KEY")),
+		StripeMeterName:      getEnv("AETHERIS_STRIPE_METER", "aetheris_bytes"),
+		EInvoiceURL:          strings.TrimSpace(os.Getenv("AETHERIS_EINVOICE_URL")),
+		EInvoiceAPIKey:       os.Getenv("AETHERIS_EINVOICE_API_KEY"),
+		CreditPerByte:        getEnvFloat("AETHERIS_CREDIT_PER_BYTE", 0),
+		CreditMaxPerPeriod:   uint64(getEnvInt("AETHERIS_CREDIT_MAX_PER_PERIOD", 0)),
+		UsageThresholds:      parseThresholds(os.Getenv("AETHERIS_USAGE_THRESHOLDS")),
+
+		MetricsEnabled: strings.EqualFold(getEnv("AETHERIS_METRICS", "false"), "true"),
+		MetricsToken:   strings.TrimSpace(os.Getenv("AETHERIS_METRICS_TOKEN")),
 	}
 
 	keys, err := parseAPIKeys(os.Getenv("AETHERIS_API_KEYS"))
@@ -127,6 +177,9 @@ func Load() (*Config, error) {
 	}
 	if cfg.ForwardTimeout <= 0 {
 		return nil, errors.New("AETHERIS_FORWARD_TIMEOUT_SEC pozitif olmali")
+	}
+	if err := cfg.validateV03b(); err != nil {
+		return nil, err
 	}
 	return cfg, nil
 }
@@ -300,4 +353,69 @@ func getEnvInt(key string, fallback int) int {
 
 func secs(key string, fallback int) time.Duration {
 	return time.Duration(getEnvInt(key, fallback)) * time.Second
+}
+
+// getEnvFloat, ondalik ortam degiskeni okur.
+func getEnvFloat(key string, fallback float64) float64 {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil || f < 0 {
+		return fallback
+	}
+	return f
+}
+
+// parseThresholds, "1000000,5000000" bicimini ayristirir.
+func parseThresholds(raw string) []uint64 {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var out []uint64
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		n, err := strconv.ParseUint(part, 10, 64)
+		if err != nil || n == 0 {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+// validateV03b, v0.3b ayarlarinin tutarliligini kontrol eder.
+// Yanlis konfigurasyonun uretimde degil ACILISTA gorulmesi icin.
+func (c *Config) validateV03b() error {
+	// TLS: cert ve key birlikte verilmeli.
+	if (c.TLSCertFile == "") != (c.TLSKeyFile == "") {
+		return errors.New("AETHERIS_TLS_CERT ve AETHERIS_TLS_KEY birlikte tanimlanmali")
+	}
+	// mTLS: istemci dogrulama icin CA zorunlu.
+	switch c.TLSClientAuth {
+	case "", "optional", "require":
+	default:
+		return fmt.Errorf("AETHERIS_TLS_CLIENT_AUTH gecersiz: %q (optional|require)", c.TLSClientAuth)
+	}
+	if c.TLSClientAuth != "" {
+		if c.TLSCertFile == "" {
+			return errors.New("mTLS icin once TLS etkinlestirilmeli (AETHERIS_TLS_CERT)")
+		}
+		if c.TLSClientCAFile == "" {
+			return errors.New("AETHERIS_TLS_CLIENT_AUTH tanimliysa AETHERIS_TLS_CLIENT_CA zorunludur")
+		}
+	}
+	// NOT: Stripe meter adi icin varsayilan deger vardir
+	// (getEnv fallback), bu yuzden bos kalamaz. Buraya bir "meter adi
+	// zorunlu" kontrolu eklemek ULASILAMAZ kod olurdu; testler bunu
+	// ortaya cikardi ve kontrol kaldirildi. Ulasilamayan dogrulama,
+	// dogrulama yokmus gibi degil, DAHA KOTUDUR: sahte guven verir.
+	// Kredi motoru: oran verilmis ama role yonlendirme yoksa uyari degil
+	// hata degil; kredi 0 kalir. Sessiz kalmasi dogru.
+	return nil
 }

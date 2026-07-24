@@ -33,6 +33,7 @@ type HealthProber struct {
 
 	mu       sync.RWMutex
 	health   map[string]*routeHealth
+	qos      map[string]*qosTracker
 	directRt string // ilk "direct" turundeki rotanin adi (fallback hedefi)
 
 	stop     chan struct{}
@@ -76,6 +77,7 @@ func NewHealthProber(r *Router, cfg ProberConfig) *HealthProber {
 		interval:      cfg.Interval,
 		failThreshold: cfg.FailThreshold,
 		health:        make(map[string]*routeHealth),
+		qos:           make(map[string]*qosTracker),
 		stop:          make(chan struct{}),
 		stopped:       make(chan struct{}),
 	}
@@ -84,6 +86,7 @@ func NewHealthProber(r *Router, cfg ProberConfig) *HealthProber {
 		rh := &routeHealth{}
 		rh.healthy.Store(true) // baslangicta saglikli varsay
 		hp.health[name] = rh
+		hp.qos[name] = newQoSTracker()
 		if rt.Kind == "direct" && hp.directRt == "" {
 			hp.directRt = name
 		}
@@ -156,20 +159,40 @@ func (hp *HealthProber) probeOne(rt Route) {
 	ctx, cancel := context.WithTimeout(context.Background(), hp.client.Timeout)
 	defer cancel()
 
+	hp.mu.RLock()
+	tr := hp.qos[rt.Name]
+	hp.mu.RUnlock()
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, probeURL.String(), nil)
 	if err != nil {
 		hp.markResult(rt.Name, rh, false)
+		if tr != nil {
+			tr.record(0, false)
+		}
 		return
 	}
+
+	// RTT olcumu: istek gonderiminden yanit basliklarinin alinmasina kadar.
+	// Govde okuma suresi DAHIL DEGILDIR (saglik yanitlari kucuktur, ama
+	// olcumun tutarli olmasi icin sinir net tutulur).
+	start := time.Now()
 	resp, err := hp.client.Do(req)
+	rtt := time.Since(start)
+
 	if err != nil {
 		hp.markResult(rt.Name, rh, false)
+		if tr != nil {
+			tr.record(rtt, false)
+		}
 		return
 	}
 	_ = resp.Body.Close()
 
 	ok := resp.StatusCode < 500
 	hp.markResult(rt.Name, rh, ok)
+	if tr != nil {
+		tr.record(rtt, ok)
+	}
 }
 
 // markResult, saglik durumunu esik mantigina gore gunceller.

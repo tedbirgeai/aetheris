@@ -17,10 +17,12 @@ import (
 	// kod dogrudan bu pakete bagimli degildir, bu yuzden bos import.
 	_ "github.com/lib/pq"
 
+	"github.com/tedbirgeai/aetheris/internal/billing"
 	"github.com/tedbirgeai/aetheris/internal/config"
 	"github.com/tedbirgeai/aetheris/internal/meter"
 	"github.com/tedbirgeai/aetheris/internal/middleware"
 	"github.com/tedbirgeai/aetheris/internal/router"
+	"github.com/tedbirgeai/aetheris/internal/security"
 	"github.com/tedbirgeai/aetheris/internal/store"
 	"github.com/tedbirgeai/aetheris/internal/tunnel"
 )
@@ -98,6 +100,60 @@ func run(logger *slog.Logger) error {
 		logger.Info("rota saglik yoklamasi aktif", "interval", cfg.HealthProbeInterval.String())
 	}
 
+	// --- v0.3b: Faturalama koprusu ---
+	bridge, err := buildBillingBridge(cfg, logger)
+	if err != nil {
+		return err
+	}
+	if bridge != nil {
+		defer func() {
+			if cerr := bridge.Close(); cerr != nil {
+				logger.Error("faturalama koprusu kapatilamadi", "err", cerr)
+			}
+		}()
+	}
+
+	var credits *billing.CreditEngine
+	if cfg.CreditPerByte > 0 {
+		credits = billing.NewCreditEngine(cfg.CreditPerByte, cfg.CreditMaxPerPeriod, bridge)
+		logger.Info("role kredi motoru aktif",
+			"credit_per_byte", cfg.CreditPerByte,
+			"max_per_period", cfg.CreditMaxPerPeriod)
+	}
+
+	var thresholds *billing.ThresholdWatcher
+	if len(cfg.UsageThresholds) > 0 && bridge != nil {
+		thresholds = billing.NewThresholdWatcher(cfg.UsageThresholds, bridge)
+		logger.Info("kullanim esigi izleyici aktif", "tiers", len(cfg.UsageThresholds))
+	}
+
+	// --- v0.3b: TLS / mTLS ---
+	var tlsMgr *security.Manager
+	if cfg.TLSCertFile != "" {
+		tlsMgr, err = security.NewManager(security.TLSConfig{
+			CertFile:       cfg.TLSCertFile,
+			KeyFile:        cfg.TLSKeyFile,
+			ClientCAFile:   cfg.TLSClientCAFile,
+			ClientAuthMode: cfg.TLSClientAuth,
+			ReloadInterval: cfg.TLSReloadInterval,
+			Logger:         logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer tlsMgr.Close()
+		st := tlsMgr.Status()
+		logger.Info("TLS sonlandirma aktif",
+			"client_auth", st.ClientAuthMode,
+			"subject", st.Subject,
+			"not_after", st.NotAfter,
+			"kalan_gun", st.DaysRemaining)
+	} else {
+		logger.Warn("TLS KAPALI - gecit duz HTTP dinliyor. " +
+			"Internete acmadan once AETHERIS_TLS_CERT/KEY tanimlayin " +
+			"veya onune TLS sonlandiran bir reverse proxy koyun.")
+	}
+
 	h := &tunnel.Handler{
 		Meter:           m,
 		Router:          rtr,
@@ -105,6 +161,12 @@ func run(logger *slog.Logger) error {
 		Logger:          logger,
 		MaxPayloadBytes: cfg.MaxPayloadBytes,
 		ReceiptSecret:   receiptSecret,
+		Billing:         bridge,
+		Credits:         credits,
+		Thresholds:      thresholds,
+	}
+	if tlsMgr != nil {
+		h.TLSStatus = func() any { return tlsMgr.Status() }
 	}
 
 	// Rate limiter: Redis adresi tanimliysa dagitik, degilse bellek-ici.
@@ -146,7 +208,22 @@ func run(logger *slog.Logger) error {
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/v1/tunnel", protected(h.Tunnel))
+	mux.Handle("/api/v1/tunnel/chunked", protected(h.TunnelChunked))
 	mux.Handle("/api/v1/meter/me", protected(h.MyUsage))
+
+	// Metrik ucu: token ZORUNLU. Token yoksa uc nokta hic acilmaz —
+	// metrikler musteri kimliklerini ve hacimlerini icerir.
+	if cfg.MetricsEnabled {
+		if cfg.MetricsToken == "" {
+			return errors.New("AETHERIS_METRICS=true icin AETHERIS_METRICS_TOKEN zorunludur " +
+				"(metrikler ticari olarak hassas veri icerir)")
+		}
+		mux.Handle("/metrics", middleware.Chain(
+			&tunnel.MetricsHandler{Handler: h, Token: cfg.MetricsToken},
+			middleware.Recover(logger),
+		))
+		logger.Info("Prometheus metrik ucu aktif", "path", "/metrics")
+	}
 	mux.Handle("/healthz", middleware.Chain(http.HandlerFunc(h.Health),
 		middleware.Recover(logger)))
 
@@ -167,8 +244,17 @@ func run(logger *slog.Logger) error {
 			"routes", len(routes),
 			"max_payload_bytes", cfg.MaxPayloadBytes,
 		)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
+		var lerr error
+		if tlsMgr != nil {
+			srv.TLSConfig = tlsMgr.ServerTLSConfig()
+			// Sertifika ve anahtar TLSConfig.GetCertificate uzerinden
+			// gelir; ListenAndServeTLS'e bos string vermek dogru kullanim.
+			lerr = srv.ListenAndServeTLS("", "")
+		} else {
+			lerr = srv.ListenAndServe()
+		}
+		if lerr != nil && !errors.Is(lerr, http.ErrServerClosed) {
+			errCh <- lerr
 		}
 	}()
 
@@ -245,4 +331,48 @@ func loadReceiptSecret(logger *slog.Logger) ([]byte, error) {
 		return nil, err
 	}
 	return secret, nil
+}
+
+// buildBillingBridge, konfigurasyondaki hedeflere gore fatura koprusunu
+// kurar. Hicbir hedef tanimli degilse nil doner (kopru devre disi).
+func buildBillingBridge(cfg *config.Config, logger *slog.Logger) (*billing.Bridge, error) {
+	var emitters []billing.Emitter
+
+	if cfg.BillingWebhookURL != "" {
+		em, err := billing.NewWebhookEmitter(
+			cfg.BillingWebhookURL, []byte(cfg.BillingWebhookSecret), 10*time.Second)
+		if err != nil {
+			return nil, err
+		}
+		emitters = append(emitters, em)
+		logger.Info("faturalama webhook hedefi kayitli", "emitter", em.Name())
+	}
+
+	if cfg.StripeAPIKey != "" {
+		emitters = append(emitters,
+			billing.NewStripeEmitter(cfg.StripeAPIKey, cfg.StripeMeterName, 15*time.Second))
+		logger.Info("Stripe hedefi kayitli", "meter", cfg.StripeMeterName)
+		logger.Warn("Stripe entegrasyonu CANLI API'ye karsi dogrulanmamistir. " +
+			"Uretime almadan once test anahtariyla bir olay gonderip " +
+			"meter'in dogru artigini teyit edin.")
+	}
+
+	if cfg.EInvoiceURL != "" {
+		em, err := billing.NewEInvoiceEmitter(cfg.EInvoiceURL, cfg.EInvoiceAPIKey, 20*time.Second)
+		if err != nil {
+			return nil, err
+		}
+		emitters = append(emitters, em)
+		logger.Info("e-Fatura hedefi kayitli")
+		logger.Warn("e-Fatura govde bicimi SECILEN ENTEGRATORE gore uyarlanmalidir; " +
+			"Turkiye'de tek bir standart e-Fatura API'si yoktur.")
+	}
+
+	if len(emitters) == 0 {
+		return nil, nil
+	}
+
+	bridge := billing.New(emitters, billing.Config{Logger: logger})
+	logger.Info("faturalama koprusu aktif", "emitters", len(emitters))
+	return bridge, nil
 }

@@ -1,0 +1,56 @@
+# Aetheris v0.3b - Hermetik Test Kosucusu
+#
+# AMAC: Windows'ta CGO/gcc olmadan `go test -race` calismaz. Bu compose,
+# testleri CGO acik bir Linux Go konteynerinde kosarak yaris kosulu
+# denetimini gelistiricinin isletim sisteminden BAGIMSIZ hale getirir.
+#
+# Kullanim:  make test-race     (veya)  bash scripts/run-tests.sh
+services:
+  test-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: aetheris
+      POSTGRES_PASSWORD: aetheris
+      POSTGRES_DB: aetheris_test
+    # Test verisi kalici OLMAMALI: her kosum temiz zeminde baslar.
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aetheris -d aetheris_test"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  test-redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  runner:
+    image: golang:1.26
+    working_dir: /src
+    depends_on:
+      test-postgres:
+        condition: service_healthy
+      test-redis:
+        condition: service_healthy
+    environment:
+      # CGO=1 -> race detector calisabilir. Windows'ta imkansiz olan bu.
+      CGO_ENABLED: "1"
+      GOFLAGS: "-mod=mod"
+      AETHERIS_TEST_DSN: "postgres://aetheris:aetheris@test-postgres:5432/aetheris_test?sslmode=disable"
+      AETHERIS_TEST_REDIS: "test-redis:6379"
+      # Modul onbellegi konteyner icinde kalsin (host'u kirletmesin)
+      GOCACHE: "/tmp/gocache"
+      GOMODCACHE: "/tmp/gomodcache"
+    volumes:
+      - .:/src:ro
+      - aetheris_testcache:/tmp
+    command: ["bash", "/src/scripts/in-container-tests.sh"]
+
+volumes:
+  aetheris_testcache:
