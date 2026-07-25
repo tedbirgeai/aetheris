@@ -31,6 +31,7 @@ import (
 	"github.com/tedbirgeai/aetheris/internal/security"
 	"github.com/tedbirgeai/aetheris/internal/store"
 	"github.com/tedbirgeai/aetheris/internal/tunnel"
+	"github.com/tedbirgeai/aetheris/internal/wan"
 )
 
 func main() {
@@ -261,6 +262,20 @@ func run(logger *slog.Logger) error {
 		defer func() { _ = meshNode.Close() }()
 	}
 
+	// --- v0.6a saha: WAN durumu dedektoru ---
+	var wanDet *wan.Detector
+	if cfg.WANCheckEnabled {
+		var prober wan.Prober = wan.NewTCPProber(cfg.WANTargets...)
+		if cfg.ExitNodeEnabled {
+			// Exit node'un dogrudan WAN'i vardir; yine de gercek olcum yapilir.
+			logger.Info("Bu dugum EXIT NODE — dogrudan WAN trafigini rele eder")
+		}
+		hasExitPeer := func() bool { return cfg.ExitPeer != "" }
+		wanDet = wan.NewDetector(prober, hasExitPeer, 15*time.Second)
+		go wanDet.Run(startCtx)
+		logger.Info("WAN durumu dedektoru aktif", "exit_peer", cfg.ExitPeer != "")
+	}
+
 	// --- v0.5a: Gomulu yonetim paneli ---
 	if cfg.AdminEnabled {
 		if cfg.AdminToken == "" {
@@ -270,7 +285,7 @@ func run(logger *slog.Logger) error {
 		dash, derr := dashboard.New(dashboard.Config{
 			AdminToken: cfg.AdminToken,
 			Provider: dashboard.ProviderFunc(func() dashboard.Telemetry {
-				return buildTelemetry(cfg, walStore, m, meshNode)
+				return buildTelemetry(cfg, walStore, m, meshNode, wanDet)
 			}),
 		})
 		if derr != nil {
@@ -354,8 +369,21 @@ func run(logger *slog.Logger) error {
 // Not: Gossip mesh bu surecte calismadigindan Nodes bos gelir (durust: bu
 // gateway ornegi mesh dugumu degildir). WAL derinligi, disk kullanimi ve
 // istemci basi bayt dokumleri canlidir.
-func buildTelemetry(cfg *config.Config, wal *store.WALStore, m *meter.Meter, mesh *gossip.Node) dashboard.Telemetry {
+func buildTelemetry(cfg *config.Config, wal *store.WALStore, m *meter.Meter, mesh *gossip.Node, wanDet *wan.Detector) dashboard.Telemetry {
 	t := dashboard.Telemetry{TS: time.Now().Unix()}
+
+	// WAN durumu: Direct / Relayed / Off-Grid.
+	if wanDet != nil {
+		st := wanDet.Status()
+		t.WANStatus = string(st)
+		t.WANLabel = st.Human()
+		if st == wan.StatusRelayed {
+			t.ExitPeer = cfg.ExitPeer
+		}
+	} else {
+		t.WANStatus = string(wan.StatusUnknown)
+		t.WANLabel = wan.StatusUnknown.Human()
+	}
 
 	if wal != nil {
 		st := wal.Stats()

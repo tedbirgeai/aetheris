@@ -39,6 +39,11 @@ body {
 .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
 .dot.on { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
 .dot.off { background: var(--danger); }
+.wan { padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; letter-spacing: .3px; margin-right: 4px; }
+.wan-direct { background: rgba(53,208,165,.15); color: var(--accent); }
+.wan-relayed { background: rgba(74,163,255,.15); color: var(--accent-2); }
+.wan-offgrid { background: rgba(242,181,68,.15); color: var(--warn); }
+.wan-unknown { background: rgba(125,139,160,.15); color: var(--muted); }
 
 main { flex: 1; padding: 20px; max-width: 1100px; margin: 0 auto; width: 100%; }
 

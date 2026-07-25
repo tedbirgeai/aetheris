@@ -40,9 +40,24 @@
     setText("throughput", fmtBytes(d.throughput_bps) + "/s");
     setText("ts", d.ts ? new Date(d.ts * 1000).toLocaleTimeString() : "—");
 
+    renderWAN(d.wan_status, d.wan_label, d.exit_peer);
     renderNodes(d.nodes || []);
     renderCredits(d.credits || []);
     drawTopology(d.nodes || []);
+  }
+
+  // WAN durumu göstergesi: Direct / Relayed / Off-Grid.
+  function renderWAN(status, label, exitPeer) {
+    var el = document.getElementById("wan-badge");
+    if (!el) return;
+    var cls = "wan-unknown", text = "WAN: " + (label || "—");
+    if (status === "direct") cls = "wan-direct";
+    else if (status === "relayed") {
+      cls = "wan-relayed";
+      if (exitPeer) text += " (" + exitPeer + ")";
+    } else if (status === "off_grid") cls = "wan-offgrid";
+    el.className = "wan " + cls;
+    el.textContent = text;
   }
 
   function setText(id, v) {

@@ -99,6 +99,19 @@ type Config struct {
 	MeshAddr string
 	// MeshSeeds, baslangic komsu adresleri (virgulle ayrilmis).
 	MeshSeeds []string
+
+	// --- v0.6a saha: WAN durumu & Exit Node ---
+	// WANCheckEnabled true ise dugum dogrudan internet erisimini periyodik
+	// olcer (panelde WAN durumu gosterilir).
+	WANCheckEnabled bool
+	// WANTargets, dogrudan erisim testinde denenecek "host:port" hedefleri.
+	WANTargets []string
+	// ExitPeer, bu dugumun WAN'a cikmak icin kullanacagi komsu exit node.
+	// Bos degilse ve dogrudan WAN yoksa durum "Relayed via Peer" olur.
+	ExitPeer string
+	// ExitNodeEnabled true ise bu dugum, dogrudan WAN'i olan bir EXIT NODE
+	// olarak digerlerinin trafigini internete rele eder.
+	ExitNodeEnabled bool
 }
 
 // RouteConfig, tek bir yonlendirme hedefidir.
@@ -170,6 +183,11 @@ func Load() (*Config, error) {
 		MeshNodeID:  strings.TrimSpace(os.Getenv("AETHERIS_MESH_NODE_ID")),
 		MeshAddr:    strings.TrimSpace(getEnv("AETHERIS_MESH_ADDR", ":7946")),
 		MeshSeeds:   parseCSV(os.Getenv("AETHERIS_MESH_SEEDS")),
+
+		WANCheckEnabled: strings.EqualFold(getEnv("AETHERIS_WAN_CHECK", "true"), "true"),
+		WANTargets:      parseCSV(os.Getenv("AETHERIS_WAN_TARGETS")),
+		ExitPeer:        strings.TrimSpace(os.Getenv("AETHERIS_EXIT_PEER")),
+		ExitNodeEnabled: strings.EqualFold(getEnv("AETHERIS_EXIT_NODE", "false"), "true"),
 	}
 
 	keys, err := parseAPIKeys(os.Getenv("AETHERIS_API_KEYS"))

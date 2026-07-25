@@ -147,6 +147,7 @@ func TestWebSocketLiveTelemetry(t *testing.T) {
 			DiskBytes:     1024 * 1024,
 			ThroughputBps: 2048,
 			Credits:       []CreditRow{{ClientID: "acme", Units: 500, Bytes: 100000}},
+			WANStatus:     "off_grid",
 		}
 	})
 	s := testServer(t, prov)
@@ -219,6 +220,13 @@ func TestWebSocketLiveTelemetry(t *testing.T) {
 	}
 	if tel.WALDepth != 7 || tel.ActiveTunnels != 3 || len(tel.Nodes) != 2 {
 		t.Fatalf("telemetri icerigi beklenenden farkli: %+v", tel)
+	}
+	// WAN durumu akmali ve etiketi otomatik dolmali.
+	if tel.WANStatus != "off_grid" {
+		t.Fatalf("WAN durumu off_grid olmali, %q", tel.WANStatus)
+	}
+	if tel.WANLabel != "Off-Grid Mesh Only" {
+		t.Fatalf("WAN etiketi otomatik dolmali, %q", tel.WANLabel)
 	}
 	if tel.TS == 0 {
 		t.Fatal("telemetri zaman damgasi bos")

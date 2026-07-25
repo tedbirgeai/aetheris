@@ -46,6 +46,16 @@ type Telemetry struct {
 	DiskBytes     uint64      `json:"disk_bytes"`
 	ThroughputBps uint64      `json:"throughput_bps"`
 	Credits       []CreditRow `json:"credits"`
+	// WANStatus, dugumun dis dunya erisim durumudur:
+	//   "direct"   — dogrudan internet
+	//   "relayed"  — komsu exit node uzerinden internet
+	//   "off_grid" — yalnizca yerel mesh (dis internet yok)
+	//   "unknown"  — henuz olculmedi
+	WANStatus string `json:"wan_status"`
+	// WANLabel, WANStatus'un okunabilir panel etiketi.
+	WANLabel string `json:"wan_label"`
+	// ExitPeer, Relayed durumda internete cikilan komsu dugum (varsa).
+	ExitPeer string `json:"exit_peer,omitempty"`
 }
 
 // Provider, canli telemetriyi saglayan kaynaktir. Gateway, gossip/WAL/tunel/
@@ -221,6 +231,12 @@ func (s *Server) pushOnce(conn *wsConn) error {
 	if t.TS == 0 {
 		t.TS = time.Now().Unix()
 	}
+	if t.WANStatus == "" {
+		t.WANStatus = "unknown"
+	}
+	if t.WANLabel == "" {
+		t.WANLabel = wanLabel(t.WANStatus)
+	}
 	data, err := json.Marshal(t)
 	if err != nil {
 		return err
@@ -231,6 +247,20 @@ func (s *Server) pushOnce(conn *wsConn) error {
 func (s *Server) deny(w http.ResponseWriter) {
 	w.Header().Set("WWW-Authenticate", `Bearer realm="aetheris-admin"`)
 	http.Error(w, "yetkisiz: gecerli admin jetonu gerekli", http.StatusUnauthorized)
+}
+
+// wanLabel, WAN durum kodunu okunabilir panel etiketine cevirir.
+func wanLabel(status string) string {
+	switch status {
+	case "direct":
+		return "Direct Internet"
+	case "relayed":
+		return "Relayed via Peer"
+	case "off_grid":
+		return "Off-Grid Mesh Only"
+	default:
+		return "Unknown"
+	}
 }
 
 // constTimeEq, iki jetonu sabit zamanda karsilastirir (zamanlama saldirisi

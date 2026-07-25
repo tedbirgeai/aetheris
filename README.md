@@ -168,6 +168,71 @@ Tüm mimari evrim ve sürüm notları için `CHANGELOG.md` dosyasına bakın.
 
 ---
 
+## Off-Grid Saha Testi: WAN Durumu ve Exit Node
+
+Aetheris iki farklı çalışma kipini net biçimde ayırır:
+
+**Tam İzolasyonlu Off-Grid (0-WAN).** Hiçbir düğümde internet yokken bile iki
+yerel cihaz mesh üzerinden doğrudan mesaj ve dosya takas eder. Kanıt:
+
+```bash
+aetheris-cli p2p-demo    # 0-WAN mesaj + dosya takasi, internet KULLANILMADI
+```
+
+**Çok-Sıçramalı İnternet Köprüsü (Exit Node).** Düğüm A'nın interneti yokken,
+WAN erişimi olan bir komşu (Düğüm B — mobil veri/Starlink) ağa katılırsa, A'nın
+şifreli TCP/UDP trafiği mesh üzerinden B'ye taşınır ve B'nin WAN'ı üzerinden dış
+dünyaya çıkar. Kanıt:
+
+```bash
+aetheris-cli exit-demo   # A --[sifreli mesh]--> B(exit) --[WAN]--> hedef ve geri
+```
+
+### Mimari kurgu
+
+```
+  Dugum A (internet YOK)                 Dugum B (exit node, WAN var)
+  ┌────────────────────┐                 ┌────────────────────┐
+  │ Tunel Ingress      │  sifreli mesh   │ Tunel Egress       │   WAN
+  │ AES-256-GCM chunk  │ ═══════════════►│ hedefe baglanir    │ ─────► Internet
+  │ (icerik B'ye kapali)│  multi-hop      │ yaniti geri sarar  │ ◄─────
+  └────────────────────┘  (Dijkstra)     └────────────────────┘
+```
+
+- **Devreye girme:** B, gossip ile "WAN erişimim var" (exit) ilanı yapar. A,
+  dış hedefe giden trafiğini `ExitPeer=B` üzerinden mesh router ile B'ye
+  yönlendirir. Yol tek-hop değilse Dijkstra ara düğümlerden geçirir.
+- **Sıfır-bilgi:** A ile hedef arasındaki yük AES-256-GCM ile uçtan uca
+  şifrelidir; B yalnızca bağlanılacak adresi bilir, taşıdığı yükün içeriğini
+  değil (yalnızca payload SHA-256 ve bayt sayımı ölçülür).
+- **Muhasebe:** B, A için taşıdığı baytlara karşılık off-grid fiş (Ed25519)
+  kazanır (bkz. Röle Kredisi).
+
+### Panel WAN göstergesi
+
+`/admin` üst barındaki rozet düğümün dış dünya durumunu anlık gösterir:
+
+| Rozet | Anlamı |
+|---|---|
+| `WAN: Direct Internet` (yeşil) | Düğümün kendi doğrudan WAN bağlantısı var |
+| `WAN: Relayed via Peer` (mavi) | Başka bir Aetheris düğümü (exit) üzerinden internete bağlı |
+| `WAN: Off-Grid Mesh Only` (sarı) | Dış internet yok; yalnızca yerel mesh aktif |
+
+Durum gerçek bir erişilebilirlik ölçümüne dayanır (sahte durum üretilmez).
+Böylece kullanıcı "yerel mesh ağı" ile "küresel internet çıkışı" arasındaki farkı
+panoda anında görür.
+
+İlgili ortam değişkenleri:
+
+```bash
+AETHERIS_WAN_CHECK=true                 # WAN durumunu periyodik ölç (varsayılan açık)
+AETHERIS_WAN_TARGETS=1.1.1.1:53,8.8.8.8:53   # doğrudan erişim testi hedefleri
+AETHERIS_EXIT_PEER=<komşu-id>           # bu düğümün WAN çıkışı için kullandığı exit node
+AETHERIS_EXIT_NODE=true                 # bu düğüm WAN'ı olan bir exit node olsun
+```
+
+---
+
 ## Lisans
 
 MIT — bkz. `LICENSE`.

@@ -82,6 +82,29 @@ func TestUnknownCommand(t *testing.T) {
 	}
 }
 
+func TestP2PDemo(t *testing.T) {
+	code, out, errb := runCLI("p2p-demo")
+	if code != 0 {
+		t.Fatalf("p2p-demo: kod=%d err=%q", code, errb)
+	}
+	if !strings.Contains(out, "BASARILI") || !strings.Contains(out, "INTERNET KULLANILMADI") {
+		t.Fatalf("p2p-demo 0-WAN basari ciktisi vermeliydi: %q", out)
+	}
+	if !strings.Contains(out, "Dosya teslim edildi") {
+		t.Fatalf("p2p-demo dosya takasi gostermeliydi: %q", out)
+	}
+}
+
+func TestExitDemo(t *testing.T) {
+	code, out, errb := runCLI("exit-demo")
+	if code != 0 {
+		t.Fatalf("exit-demo: kod=%d err=%q", code, errb)
+	}
+	if !strings.Contains(out, "BASARILI") || !strings.Contains(out, "WAN'a ulasti") {
+		t.Fatalf("exit-demo WAN kopru basarisi vermeliydi: %q", out)
+	}
+}
+
 func TestServe(t *testing.T) {
 	code, out, _ := runCLI("serve", "-id", "testnode")
 	if code != 0 || !strings.Contains(out, "mesh dugumu hazir") {

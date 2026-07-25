@@ -2,6 +2,21 @@
 
 Aetheris Protocol — sürüm geçmişi. Tarihler sürüm mühürleme anını yansıtır.
 
+## [v0.6a] — Off-Grid Saha Testi: WAN Durumu & Exit Node (nokta güncelleme)
+
+### Eklendi
+- **WAN durumu tespiti** (`internal/wan/`): dürüst erişilebilirlik ölçümüyle
+  `Direct` / `Relayed` / `Off-Grid` sınıflandırması.
+- **Panel WAN göstergesi:** `/admin` üst barında düğümün internet durumunu anlık
+  gösteren rozet (Direct Internet / Relayed via Peer / Off-Grid Mesh Only).
+- **Exit Node & WAN köprü demosu** (`aetheris-cli exit-demo`): internetsiz Düğüm
+  A'nın, WAN'ı olan Düğüm B üzerinden çok-sıçramalı olarak dış dünyaya eriştiğini
+  kanıtlar.
+- **0-WAN P2P demosu** (`aetheris-cli p2p-demo`): hiçbir düğümde internet yokken
+  iki yerel düğümün mesh üzerinden mesaj + dosya takas ettiğini kanıtlar.
+- `AETHERIS_WAN_CHECK`, `AETHERIS_WAN_TARGETS`, `AETHERIS_EXIT_PEER`,
+  `AETHERIS_EXIT_NODE` ortam değişkenleri.
+
 ## [v0.6a-turnkey] — Evrensel Mimari (Turnkey Release)
 
 Sistem parçalı yapılardan çıkarılıp; off-grid sahra cihazından kurumsal veri

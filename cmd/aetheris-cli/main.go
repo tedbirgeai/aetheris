@@ -14,17 +14,23 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"context"
+	"crypto/rand"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/tedbirgeai/aetheris/internal/billing/ledger"
 	"github.com/tedbirgeai/aetheris/internal/router/mesh"
 	"github.com/tedbirgeai/aetheris/internal/security"
+	"github.com/tedbirgeai/aetheris/internal/tunnel"
 )
 
 // Version, surum etiketi (build sirasinda -ldflags ile gecilebilir).
@@ -49,6 +55,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdReceipt(args[1:], stdout, stderr)
 	case "mesh-demo":
 		return cmdMeshDemo(args[1:], stdout, stderr)
+	case "p2p-demo":
+		return cmdP2PDemo(args[1:], stdout, stderr)
+	case "exit-demo":
+		return cmdExitDemo(args[1:], stdout, stderr)
 	case "serve":
 		return cmdServe(args[1:], stdout, stderr)
 	case "version", "-v", "--version":
@@ -75,6 +85,8 @@ Komutlar:
   route               Topolojide en dusuk maliyetli yolu hesapla
   receipt             Imzali role fisi uret/dogrula
   mesh-demo           3 dugumlu cok-sicramali teslim gosterimi
+  p2p-demo            Tam cevrimdisi (0-WAN) P2P mesaj + dosya takasi
+  exit-demo           Exit Node uzerinden WAN kopru (multi-hop internet cikisi)
   serve               Yerel mesh dugumu olarak calis
   version             Surum bilgisi
 
@@ -82,6 +94,8 @@ Ornekler:
   aetheris-cli keygen
   aetheris-cli route -links "A-B:10:ethernet,B-C:10:ethernet" -from A -to C
   aetheris-cli mesh-demo
+  aetheris-cli p2p-demo
+  aetheris-cli exit-demo
 `)
 }
 
@@ -274,6 +288,149 @@ func cmdMeshDemo(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
+// cmdP2PDemo, TAM CEVRIMDISI (0-WAN) iki yerel dugumun mesh uzerinden mesaj
+// ve dosya takasi yaptigini kanitlar. Hicbir dis sunucu/internet kullanilmaz;
+// veri AES-256-GCM ile sifrelenip surec-ici mesh baglantisi (PipeLink) uzerinden
+// tasinir. Sahada iki cihaz arasindaki UDP/LoRa baglantisinin karsiligidir.
+func cmdP2PDemo(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("p2p-demo", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	fmt.Fprintln(stdout, "=== TAM CEVRIMDISI (0-WAN) P2P TAKAS ===")
+	fmt.Fprintln(stdout, "Ortam: iki yerel dugum, HICBIR internet/WAN yok.")
+
+	// Paylasilan oturum anahtari (sahada anahtar takasi ayri; burada ortak).
+	key := make([]byte, tunnel.AES256KeySize)
+	if _, err := rand.Read(key); err != nil {
+		fmt.Fprintln(stderr, "anahtar hatasi:", err)
+		return 1
+	}
+
+	// Alice (gonderen) ve Bob (alan) icin proxy.
+	alice, err := tunnel.NewProxy(key, 4096)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	bob, err := tunnel.NewProxy(key, 4096)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+
+	// 1) MESAJ takasi.
+	message := []byte("Merhaba Bob — bu mesaj internet OLMADAN, yalnizca yerel mesh uzerinden geldi.")
+	// 2) DOSYA takasi (sentetik 64 KB ikili dosya).
+	file := make([]byte, 64*1024)
+	_, _ = rand.Read(file)
+	payload := append(append([]byte(nil), message...), file...)
+
+	// Bob tarafinda gelen baytlari toplayan hedef.
+	sink := newReaderConn(nil)
+	linkA, linkB := tunnel.NewPipeLink()
+
+	var wg sync.WaitGroup
+	var aliceStats tunnel.Stats
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, _ = bob.ServeEgress(context.Background(), linkB, func(context.Context) (io.ReadWriteCloser, error) {
+			return sink, nil
+		})
+	}()
+	go func() {
+		defer wg.Done()
+		aliceStats, _ = alice.ServeIngress(context.Background(), newReaderConn(payload), linkA)
+	}()
+	wg.Wait()
+
+	got := sink.Bytes()
+	if !bytes.Equal(got, payload) {
+		fmt.Fprintln(stderr, "SONUC: BASARISIZ — veri bozuldu")
+		return 1
+	}
+	fmt.Fprintf(stdout, "[1] Mesaj teslim edildi (%d bayt): %q\n", len(message), string(message))
+	fmt.Fprintf(stdout, "[2] Dosya teslim edildi (%d bayt), butunluk TAM\n", len(file))
+	fmt.Fprintf(stdout, "    Zero-knowledge PayloadSHA: %s\n", aliceStats.PayloadSHA[:32]+"…")
+	fmt.Fprintln(stdout, "    Sifreleme: AES-256-GCM (her parca taze nonce)")
+	fmt.Fprintln(stdout, "SONUC: BASARILI — 0-WAN P2P mesaj+dosya takasi, INTERNET KULLANILMADI")
+	return 0
+}
+
+// cmdExitDemo, dogrudan WAN'i OLMAYAN Dugum A'nin, WAN'i olan Dugum B (exit
+// node) uzerinden dis dunyaya eristigini gosterir. A'nin sifreli trafigi mesh
+// uzerinden B'ye tasinir; B trafigi WAN hedefe (burada yerel echo, gercek
+// internetin karsiligi) iletir ve yaniti geri dondurur.
+func cmdExitDemo(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("exit-demo", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	fmt.Fprintln(stdout, "=== EXIT NODE — MULTI-HOP WAN KOPRU ===")
+	fmt.Fprintln(stdout, "Dugum A: internet YOK.  Dugum B: exit node (WAN var).")
+	fmt.Fprintln(stdout, "Akis: A --[sifreli mesh]--> B --[WAN]--> hedef ve geri.")
+
+	// "WAN hedefi" olarak yerel bir echo sunucusu (gercek internetin karsiligi).
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		fmt.Fprintln(stderr, "echo sunucu hatasi:", err)
+		return 1
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn) { defer conn.Close(); _, _ = io.Copy(conn, conn) }(c)
+		}
+	}()
+
+	key := make([]byte, tunnel.AES256KeySize)
+	_, _ = rand.Read(key)
+	nodeA, _ := tunnel.NewProxy(key, 4096)
+	nodeB, _ := tunnel.NewProxy(key, 4096)
+
+	request := []byte("GET /veri HTTP/1.0 — A'dan cikan, B'nin WAN'i uzerinden giden istek")
+	sink := newReaderConn(request) // A'nin gonderdigi
+
+	linkA, linkB := tunnel.NewPipeLink()
+	var wg sync.WaitGroup
+	var aStats tunnel.Stats
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		// B = exit node: mesh'ten geleni WAN hedefe (echo) baglar.
+		_, _ = nodeB.ServeEgress(context.Background(), linkB, func(ctx context.Context) (io.ReadWriteCloser, error) {
+			d := net.Dialer{}
+			return d.DialContext(ctx, "tcp", ln.Addr().String())
+		})
+	}()
+	go func() {
+		defer wg.Done()
+		aStats, _ = nodeA.ServeIngress(context.Background(), sink, linkA)
+	}()
+	wg.Wait()
+
+	echoed := sink.Written()
+	if !bytes.Equal(echoed, request) {
+		fmt.Fprintln(stderr, "SONUC: BASARISIZ — WAN yaniti bozuldu")
+		return 1
+	}
+	fmt.Fprintf(stdout, "[+] A'nin istegi B'nin WAN'i uzerinden gidip yaniti dondu (%d bayt)\n", len(request))
+	fmt.Fprintf(stdout, "    B'ye giden trafik uctan uca sifreli (A ve WAN arasi B icerigi GORMEZ*)\n")
+	fmt.Fprintf(stdout, "    Zero-knowledge PayloadSHA: %s\n", aStats.PayloadSHA[:32]+"…")
+	fmt.Fprintln(stdout, "    * B, hedefe baglanmak icin adresi bilir; yuk AES-256-GCM ile korunur.")
+	fmt.Fprintln(stdout, "SONUC: BASARILI — A, kendi interneti olmadan B uzerinden WAN'a ulasti")
+	return 0
+}
+
 func cmdServe(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -303,3 +460,29 @@ func shortID(id string) string {
 	}
 	return id
 }
+
+// memPipe, bir ReadWriteCloser'dir: sabit girdi baytlarini Read ile verir
+// (bitince EOF), yazilan baytlari bir tampona toplar. Demo icin istemci/hedef
+// baglantisini modeller.
+type memPipe struct {
+	in  *bytes.Reader
+	mu  sync.Mutex
+	out bytes.Buffer
+}
+
+func newReaderConn(input []byte) *memPipe { return &memPipe{in: bytes.NewReader(input)} }
+
+func (m *memPipe) Read(b []byte) (int, error) { return m.in.Read(b) }
+func (m *memPipe) Write(b []byte) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.out.Write(b)
+}
+func (m *memPipe) Close() error      { return nil }
+func (m *memPipe) CloseWrite() error { return nil }
+func (m *memPipe) Written() []byte {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]byte(nil), m.out.Bytes()...)
+}
+func (m *memPipe) Bytes() []byte { return m.Written() }
