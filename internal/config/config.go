@@ -81,6 +81,13 @@ type Config struct {
 	MetricsEnabled bool
 	// MetricsToken bos degilse /metrics Bearer token ister.
 	MetricsToken string
+
+	// --- v0.5a: Gomulu yonetim paneli ---
+	// AdminEnabled true ise /admin paneli ve telemetri WebSocket'i acilir.
+	AdminEnabled bool
+	// AdminToken, panele erisim icin zorunlu oturum jetonu. AdminEnabled
+	// true iken bos olamaz (fail-closed).
+	AdminToken string
 }
 
 // RouteConfig, tek bir yonlendirme hedefidir.
@@ -144,6 +151,9 @@ func Load() (*Config, error) {
 
 		MetricsEnabled: strings.EqualFold(getEnv("AETHERIS_METRICS", "false"), "true"),
 		MetricsToken:   strings.TrimSpace(os.Getenv("AETHERIS_METRICS_TOKEN")),
+
+		AdminEnabled: strings.EqualFold(getEnv("AETHERIS_ADMIN", "false"), "true"),
+		AdminToken:   strings.TrimSpace(os.Getenv("AETHERIS_ADMIN_TOKEN")),
 	}
 
 	keys, err := parseAPIKeys(os.Getenv("AETHERIS_API_KEYS"))

@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AETHERIS — Yönetim Paneli</title>
+  <link rel="stylesheet" href="/admin/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">◈</span>
+      <span class="title">AETHERIS</span>
+      <span class="sub">Live Topology Observer</span>
+    </div>
+    <div class="conn">
+      <span id="dot" class="dot off"></span>
+      <span id="conn-text">bağlantı bekleniyor…</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="cards">
+      <div class="card">
+        <div class="card-label">WAL Kuyruk Derinliği</div>
+        <div class="card-value" id="wal-depth">—</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Aktif Tünel</div>
+        <div class="card-value" id="tunnels">—</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Disk Kullanımı</div>
+        <div class="card-value" id="disk">—</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Geçiş Hızı</div>
+        <div class="card-value" id="throughput">—</div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="panel">
+        <h2>Gossip Mesh Topolojisi</h2>
+        <canvas id="topo" width="520" height="360"></canvas>
+        <table class="nodes">
+          <thead><tr><th>Düğüm</th><th>Taşıyıcı</th><th>RTT</th><th>Durum</th></tr></thead>
+          <tbody id="node-rows"></tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <h2>Faturalama / Kredi Hareketi</h2>
+        <table class="credits">
+          <thead><tr><th>İstemci</th><th>Kredi Birimi</th><th>Bayt</th></tr></thead>
+          <tbody id="credit-rows"></tbody>
+        </table>
+        <div class="meta">
+          <span>Son güncelleme: <span id="ts">—</span></span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>Zero-Knowledge · yalnızca payload SHA-256 ve bayt sayımı ölçülür · tek binary · offline</span>
+  </footer>
+
+  <script src="/admin/app.js"></script>
+</body>
+</html>

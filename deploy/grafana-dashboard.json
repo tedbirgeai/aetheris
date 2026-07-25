@@ -1,0 +1,192 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "AETHERIS /metrics ucunu kazan Prometheus veri kaynagi",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "tags": ["aetheris", "tunnel", "zero-knowledge"],
+  "title": "AETHERIS Gateway — Genel Bakis",
+  "timezone": "browser",
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "10s",
+  "templating": {
+    "list": [
+      {
+        "name": "client",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "query": "label_values(aetheris_client_requests_total, client_id)",
+        "includeAll": true,
+        "multi": true,
+        "refresh": 2
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Istek Hizi (req/s)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(aetheris_requests_total[5m]))",
+          "legendFormat": "toplam"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Gecis Hizi (Bytes/sec)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "Bps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(aetheris_bytes_in_total[5m]))",
+          "legendFormat": "in"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(aetheris_bytes_out_total[5m]))",
+          "legendFormat": "out"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Aktif Tunel",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "aetheris_active_tunnels" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Uptime",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "aetheris_uptime_seconds" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Faturalama Kuyruk Derinligi",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "aetheris_billing_queue_depth" }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Rota Saglik Durumu",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DUSUK", "color": "red" }, "1": { "text": "SAGLIKLI", "color": "green" } } }
+          ]
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "refId": "A", "expr": "min(aetheris_route_healthy)" }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Rota RTT (ms)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "aetheris_route_rtt_milliseconds",
+          "legendFormat": "{{route}}"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Rota Jitter (ms)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "aetheris_route_jitter_milliseconds",
+          "legendFormat": "{{route}}"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Istemci Bazli Bayt (in+out)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 22 },
+      "fieldConfig": { "defaults": { "unit": "Bps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (client_id) (rate(aetheris_client_bytes_in_total{client_id=~\"$client\"}[5m]) + rate(aetheris_client_bytes_out_total{client_id=~\"$client\"}[5m]))",
+          "legendFormat": "{{client_id}}"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Faturalama Olaylari (rate)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 22 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(aetheris_billing_events_delivered_total[5m])",
+          "legendFormat": "teslim"
+        },
+        {
+          "refId": "B",
+          "expr": "rate(aetheris_billing_events_failed_total[5m])",
+          "legendFormat": "basarisiz"
+        },
+        {
+          "refId": "C",
+          "expr": "rate(aetheris_billing_events_dropped_total[5m])",
+          "legendFormat": "dusen"
+        }
+      ]
+    }
+  ]
+}

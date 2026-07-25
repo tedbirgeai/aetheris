@@ -1,0 +1,64 @@
+# AETHERIS Gateway — systemd birim dosyasi
+#
+# Kurulum:
+#   sudo cp aetheris-gateway /usr/local/bin/
+#   sudo cp deploy/aetheris.service /etc/systemd/system/
+#   sudo mkdir -p /etc/aetheris /var/lib/aetheris
+#   sudo cp deploy/aetheris.env /etc/aetheris/aetheris.env   # ortam degiskenleri
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now aetheris
+#
+# Loglar:   journalctl -u aetheris -f
+
+[Unit]
+Description=AETHERIS Zero-Knowledge Tunnel Gateway
+Documentation=https://github.com/tedbirgeai/aetheris
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/aetheris-gateway
+EnvironmentFile=/etc/aetheris/aetheris.env
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+
+# --- Ayricalik dususu ---
+# Ozel, ayricalliksiz kullanici olarak calis (systemd otomatik olusturur).
+DynamicUser=yes
+# WAL dayanikli kuyrugu icin kalici dizin (kullaniciya ozel).
+StateDirectory=aetheris
+Environment=AETHERIS_WAL_DIR=/var/lib/aetheris/wal
+
+# Ham ICMP QoS probu icin CAP_NET_RAW gerekir; yalnizca bu yetenegi ver.
+# Bu verilmezse motor SAHTE metrik uretmez, http_fallback'e duser (durust).
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+
+# --- Sertlestirme (hardening) ---
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+
+# --- Kaynak sinirlari ---
+LimitNOFILE=65536
+MemoryMax=1G
+TasksMax=4096
+
+[Install]
+WantedBy=multi-user.target

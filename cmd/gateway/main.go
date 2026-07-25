@@ -6,10 +6,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -19,6 +21,7 @@ import (
 
 	"github.com/tedbirgeai/aetheris/internal/billing"
 	"github.com/tedbirgeai/aetheris/internal/config"
+	"github.com/tedbirgeai/aetheris/internal/dashboard"
 	"github.com/tedbirgeai/aetheris/internal/meter"
 	"github.com/tedbirgeai/aetheris/internal/middleware"
 	"github.com/tedbirgeai/aetheris/internal/router"
@@ -57,6 +60,7 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 	// WAL katmani: etkinse store'u dayanikli kuyrukla sar.
+	var walStore *store.WALStore // panel telemetrisi icin referans (nil olabilir)
 	if cfg.WALEnabled {
 		wal, werr := store.NewWAL(startCtx, st, store.WALConfig{
 			Dir:    cfg.WALDir,
@@ -67,6 +71,7 @@ func run(logger *slog.Logger) error {
 		}
 		logger.Info("WAL dayanikli kuyruk aktif", "dir", cfg.WALDir)
 		st = wal
+		walStore = wal
 	}
 	defer func() {
 		if cerr := st.Close(); cerr != nil {
@@ -224,6 +229,26 @@ func run(logger *slog.Logger) error {
 		))
 		logger.Info("Prometheus metrik ucu aktif", "path", "/metrics")
 	}
+	// --- v0.5a: Gomulu yonetim paneli ---
+	if cfg.AdminEnabled {
+		if cfg.AdminToken == "" {
+			return errors.New("AETHERIS_ADMIN=true icin AETHERIS_ADMIN_TOKEN zorunludur " +
+				"(panel telemetrisi ticari olarak hassas veri icerir)")
+		}
+		dash, derr := dashboard.New(dashboard.Config{
+			AdminToken: cfg.AdminToken,
+			Provider: dashboard.ProviderFunc(func() dashboard.Telemetry {
+				return buildTelemetry(cfg, walStore, m)
+			}),
+		})
+		if derr != nil {
+			return fmt.Errorf("panel kurulamadi: %w", derr)
+		}
+		dash.RegisterRoutes(mux)
+		logger.Info("Gomulu yonetim paneli aktif", "path", "/admin",
+			"ws", "/api/v1/ws/telemetry")
+	}
+
 	mux.Handle("/healthz", middleware.Chain(http.HandlerFunc(h.Health),
 		middleware.Recover(logger)))
 
@@ -291,6 +316,52 @@ func run(logger *slog.Logger) error {
 }
 
 // buildStore, konfigurasyona gore kalicilik katmanini secer.
+// buildTelemetry, panele gonderilecek anlik telemetriyi GERCEK alt
+// sistemlerden toplar. Zero-knowledge: yalnizca sayimlar/istatistikler.
+//
+// Not: Gossip mesh bu surecte calismadigindan Nodes bos gelir (durust: bu
+// gateway ornegi mesh dugumu degildir). WAL derinligi, disk kullanimi ve
+// istemci basi bayt dokumleri canlidir.
+func buildTelemetry(cfg *config.Config, wal *store.WALStore, m *meter.Meter) dashboard.Telemetry {
+	t := dashboard.Telemetry{TS: time.Now().Unix()}
+
+	if wal != nil {
+		st := wal.Stats()
+		t.WALDepth = st.Pending
+	}
+	if cfg.WALEnabled {
+		t.DiskBytes = dirSize(cfg.WALDir)
+	}
+
+	// Kredi/bayt dokumu: meter snapshot'indan istemci basi bayt toplamlari.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if snap, err := m.Snapshot(ctx); err == nil {
+		for id, e := range snap.Clients {
+			if e == nil {
+				continue
+			}
+			t.Credits = append(t.Credits, dashboard.CreditRow{
+				ClientID: id,
+				Bytes:    e.BytesIn + e.BytesOut,
+			})
+		}
+	}
+	return t
+}
+
+// dirSize, bir dizindeki dosyalarin toplam boyutunu (bayt) dondurur.
+func dirSize(dir string) uint64 {
+	var total uint64
+	_ = filepath.Walk(dir, func(_ string, info os.FileInfo, err error) error {
+		if err == nil && info != nil && !info.IsDir() {
+			total += uint64(info.Size())
+		}
+		return nil
+	})
+	return total
+}
+
 func buildStore(ctx context.Context, cfg *config.Config, logger *slog.Logger) (store.Store, error) {
 	switch cfg.StoreKind {
 	case "postgres":

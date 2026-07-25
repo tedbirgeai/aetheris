@@ -249,21 +249,85 @@ func (w *WALStore) flushBatch(batch []walRecord) {
 }
 
 // truncateWAL, basariyla islenmis WAL dosyasini sifirlar.
+//
+// PLATFORM NOTU (v0.5a sertlestirmesi): Onceki surum acik dosya uzerinde
+// dogrudan File.Truncate(0)+Seek(0) cagiriyordu. Bu Linux'ta calisir ama
+// WINDOWS acik bir O_APPEND handle'ini truncate etmeye izin vermez
+// ("Erisim engellendi"). Cozum: dosyayi kapatip BOS bir gecici dosyayi
+// ATOMIK rename ile asil yolun uzerine tasimak (temp-swap). Bu desen hem
+// Linux hem Windows'ta SIFIR uyari ile calisir ve yarim-yazilmis durum
+// birakmaz (rename atomiktir: okuyucu ya eski-tam ya yeni-bos gorur).
 func (w *WALStore) truncateWAL() {
 	w.walMu.Lock()
 	defer w.walMu.Unlock()
 
+	if err := w.rotateToEmpty(); err != nil {
+		w.logger.Warn("WAL sifirlama (atomik swap) hatasi", "err", err)
+	}
+}
+
+// rotateToEmpty, aktif WAL dosyasini kapatir, bos bir gecici dosyayi
+// atomik olarak asil WAL yolunun uzerine tasir ve yeniden acar. Cagiran
+// walMu kilidini TUTUYOR olmalidir (appendWAL ile serilestirme icin).
+func (w *WALStore) rotateToEmpty() error {
+	walPath := filepath.Join(w.dir, "aetheris.wal")
+	tmpPath := walPath + ".tmp"
+
+	// 1) Tamponu bosalt, diske indir ve handle'i kapat. Windows'ta rename'in
+	//    calisabilmesi icin asil dosyada acik handle KALMAMALIDIR.
 	if err := w.walBuf.Flush(); err != nil {
-		w.logger.Warn("WAL truncate oncesi flush hatasi", "err", err)
-		return
+		return err
 	}
-	if err := w.walFile.Truncate(0); err != nil {
-		w.logger.Warn("WAL truncate hatasi", "err", err)
-		return
+	if err := w.walFile.Sync(); err != nil {
+		return err
 	}
-	if _, err := w.walFile.Seek(0, 0); err != nil {
-		w.logger.Warn("WAL seek hatasi", "err", err)
+	if err := w.walFile.Close(); err != nil {
+		return err
 	}
+
+	// 2) Bos gecici dosya olustur ve diske indir.
+	tmp, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o640)
+	if err != nil {
+		return w.reopenWAL(walPath, err)
+	}
+	if serr := tmp.Sync(); serr != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return w.reopenWAL(walPath, serr)
+	}
+	if cerr := tmp.Close(); cerr != nil {
+		_ = os.Remove(tmpPath)
+		return w.reopenWAL(walPath, cerr)
+	}
+
+	// 3) Atomik takas: bos dosya asil WAL'in yerine gecer. Go'nun os.Rename'i
+	//    her iki platformda da varolan hedefin uzerine yazar (Windows'ta
+	//    MoveFileEx + REPLACE_EXISTING).
+	if rerr := os.Rename(tmpPath, walPath); rerr != nil {
+		_ = os.Remove(tmpPath)
+		return w.reopenWAL(walPath, rerr)
+	}
+
+	// 4) Yeni bos WAL'i tekrar append modunda ac.
+	return w.reopenWAL(walPath, nil)
+}
+
+// reopenWAL, WAL dosyasini yeniden acar ve tamponu tazeler. cause verildiyse
+// (onceki adimda bir hata olduysa) yeniden acma basarili olsa bile o hata
+// dondurulur; boylece cagiran sorunu loglayabilir ama store yazmaya devam
+// edebilir.
+func (w *WALStore) reopenWAL(walPath string, cause error) error {
+	f, err := os.OpenFile(walPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o640)
+	if err != nil {
+		// Yeniden acma da basarisizsa store artik yazamaz; bu ciddi.
+		if cause != nil {
+			return fmt.Errorf("wal: sifirlama basarisiz (%v) ve yeniden acilamadi: %w", cause, err)
+		}
+		return fmt.Errorf("wal: yeniden acilamadi: %w", err)
+	}
+	w.walFile = f
+	w.walBuf = bufio.NewWriter(f)
+	return cause
 }
 
 // recover, onceki calismadan kalan WAL'i okur ve alt store'a basar.
