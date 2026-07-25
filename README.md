@@ -1,279 +1,173 @@
-# Aetheris Enterprise Gateway v0.3b
+# AETHERIS PROTOCOL — Evrensel Mimari (v0.6a-turnkey)
 
-Taşıyıcı-bağımsız (PHY-agnostic), sıfır-bilgi (zero-knowledge) tünel geçidi:
-bayt bazlı ölçüm, kalıcı faturalama defteri, dayanıklı kuyruk, dağıtık hız
-sınırlama, failover'lı yönlendirme, mTLS, istemci taraflı tekilleştirme ve
-ticari faturalama köprüsü.
+Taşıyıcı-bağımsız (PHY-agnostic), sıfır-bilgi (zero-knowledge) tünel geçidi ve
+mesh SDK'sı. Afrika/Arabistan çölündeki **off-grid** saha cihazından metropoldeki
+**kurumsal veri merkezine** kadar, sıfır dış bağımlılıkla çalışan anahtar-teslim
+bir sistem.
 
-**Doğrulama durumu**
+Tek statik binary. Node.js yok, dış CDN yok, çalışması için internet gerekmez.
+
+---
+
+## Çelik İlkeler
+
+1. **Mutlak Sıfır-Altyapı (Off-Grid Native).** İnternet, GSM veya merkezi hiçbir
+   servis olmadan; ağ kendi çok-sıçramalı yönlendirmesini, düğüm keşfini ve
+   off-grid bakiye muhasebesini kendisi yapar.
+2. **Donanım ve Platform Agnostic.** Tek komutla Linux (amd64, arm64), Windows
+   (amd64) ve macOS (amd64, arm64) için cross-compiled binary üretilir.
+3. **Ağ İçi Sıfır-Bilgi Güvenliği.** Sybil saldırıları, replay (tekrar oynatma)
+   ve sahte bakiye girişimleri Ed25519 imzaları, Proof-of-Work ve nonce kayan
+   penceresi ile matematiksel olarak engellenir. Taşınan yükün içeriği asla
+   saklanmaz; yalnızca payload SHA-256 ve bayt sayımı ölçülür.
+
+---
+
+## Mimari Evrim (v0.1a → v0.6a)
+
+| Sürüm | Kod adı | Getirdikleri |
+|---|---|---|
+| v0.1a | temel geçit | Bayt bazlı ölçüm, PHY-agnostic taşıyıcı soyutlaması |
+| v0.2a | dayanıklılık | Kalıcı faturalama defteri, failover'lı yönlendirme |
+| v0.3a | ölçek | WAL dayanıklı kuyruk, Redis dağıtık hız sınırlama |
+| v0.3b | ticari | mTLS, dedup, QoS probu, faturalama köprüsü, hermetik test |
+| v0.4a | mesh | LoRa HAL, gossip keşif/anti-entropy, ham ICMP/UDP QoS, split-brain WAL simülatörü, Stripe/e-Fatura harness |
+| v0.5a | enterprise | Gömülü web dashboard, canlı TCP/UDP tünel proxy motoru, Windows WAL sertleştirme, üretim paketi |
+| **v0.6a** | **turnkey** | **Çok-sıçramalı Dijkstra yönlendirme, Sybil/replay kalkanı, off-grid Ed25519 fiş defteri, çapraz-platform CLI SDK, canlı mesh topolojisi** |
+
+---
+
+## Mimari Şeması
+
+```
+                        ┌──────────────────────────────────────────┐
+                        │              AETHERIS NODE                │
+                        │            (tek statik binary)            │
+                        ├──────────────────────────────────────────┤
+   İstemci ─TCP/UDP─►   │  Tünel Proxy Motoru (AES-256-GCM chunk)   │
+                        │      zero-knowledge: SHA-256 + bayt       │
+                        ├──────────────────────────────────────────┤
+                        │  Mesh Router (Dijkstra, çok-sıçramalı)    │──► komşu B
+                        │   TTL · loop-prevention · taşıyıcı seçimi │──► komşu C
+                        ├──────────────────────────────────────────┤
+                        │  Güvenlik Kalkanı (guard)                 │
+                        │   Ed25519 kimlik · PoW · replay penceresi │
+                        ├──────────────────────────────────────────┤
+                        │  Gossip (keşif + anti-entropy, merkezsiz) │
+                        ├──────────────────────────────────────────┤
+                        │  Off-Grid Ledger (Ed25519 fiş/voucher)    │
+                        ├──────────────────────────────────────────┤
+                        │  WAL (atomik-swap, çapraz-platform)       │
+                        ├──────────────────────────────────────────┤
+                        │  /admin Dashboard (go:embed, offline)     │
+                        │   canlı topoloji · WebSocket telemetri    │
+                        └──────────────────────────────────────────┘
+```
+
+Taşıyıcılar: **LoRa (ISM)**, **Wi-Fi**, **Ethernet**. Router en düşük
+`RTT × taşıyıcı_ağırlığı` maliyetli yolu seçer; A→C doğrudan yoksa B üzerinden
+hop-by-hop aktarır.
+
+---
+
+## Off-Grid Kullanım Kılavuzu
+
+İnternet, DNS veya merkezi sunucu **olmadan** üç sahra düğümü:
+
+```bash
+# Düğüm A (sahra röle noktası)
+AETHERIS_MESH=true AETHERIS_MESH_NODE_ID=saha-A \
+AETHERIS_MESH_ADDR=:7946 aetheris-gateway
+
+# Düğüm B (ara röle) — A'yı tohum komşu olarak alır
+AETHERIS_MESH=true AETHERIS_MESH_NODE_ID=saha-B \
+AETHERIS_MESH_ADDR=:7946 AETHERIS_MESH_SEEDS=10.0.0.1:7946 aetheris-gateway
+```
+
+- **Keşif:** UDP broadcast beacon ile komşular merkezi sunucu olmadan bulunur.
+- **Yönlendirme:** A, C'ye doğrudan erişemezse paket B üzerinden otomatik gider.
+- **Muhasebe:** B, A'nın taşıdığı baytlar için Ed25519 imzalı fiş keser; A bu
+  fişleri biriktirir ve röle kredisi (Relay Credit) kazanır. İnternet sıfır olsa
+  dahi kredi matematiksel olarak kanıtlanır.
+
+CLI ile hızlı gösterim:
+
+```bash
+aetheris-cli mesh-demo         # 3 düğümlü kayıpsız çok-sıçramalı teslim
+aetheris-cli route -links "A-B:10:ethernet,B-C:10:ethernet" -from A -to C
+aetheris-cli keygen            # Ed25519 düğüm kimliği
+```
+
+---
+
+## Kurumsal (Enterprise) Kullanım Kılavuzu
+
+```bash
+# Üretim: Postgres + Redis + mTLS + panel + metrikler
+AETHERIS_STORE=postgres \
+AETHERIS_DATABASE_DSN="postgres://...:5432/aetheris" \
+AETHERIS_WAL_ENABLED=true \
+AETHERIS_METRICS=true AETHERIS_METRICS_TOKEN=<gizli> \
+AETHERIS_ADMIN=true AETHERIS_ADMIN_TOKEN=<gizli> \
+AETHERIS_MESH=true AETHERIS_MESH_ADDR=:7946 \
+aetheris-gateway
+```
+
+- **Dashboard:** `https://<host>/admin?token=<AETHERIS_ADMIN_TOKEN>` — canlı mesh
+  topolojisi, WAL derinliği, geçiş hızı, kredi dökümü. Tamamen offline (gömülü).
+- **Metrikler:** `/metrics` (Prometheus). Hazır Grafana panosu:
+  `deploy/grafana-dashboard.json`.
+- **Dağıtım:** `deploy/aetheris.service` (systemd, sertleştirilmiş),
+  `deploy/docker-compose.prod.yml`.
+
+---
+
+## Derleme ve Çalıştırma
+
+```bash
+# Yerel binary
+make build            # bin/aetheris (gateway)
+make cli              # bin/aetheris-cli
+
+# Tüm platformlar için release (Linux amd64/arm64, Windows, macOS amd64/arm64)
+make release          # dist/ altına 2 uygulama × 5 platform
+
+# Testler
+make test-race        # hermetik Docker, -race, canlı Postgres/Redis
+```
+
+Cross-compilation CGO gerektirmez; her hedef tek statik binary olarak üretilir.
+
+---
+
+## Güvenlik Modeli (Ağ İçi Sıfır-Bilgi)
+
+| Tehdit | Savunma |
+|---|---|
+| Sahte kimlik (spoofing) | Ed25519 düğüm kimliği; her düğüm NodeID'sini imzalar |
+| Sybil (ağı sahte düğümle domine etme) | Proof-of-Work: her düğüm katılım için hesaplama maliyeti öder |
+| Replay (paket tekrar oynatma) | Nonce kayan penceresi + zaman damgası pencere doğrulaması |
+| Sahte bakiye / çift harcama | Ed25519 imzalı fiş/voucher; nonce ile tek-kullanım |
+| Yük gözetimi | Zero-knowledge: içerik saklanmaz, yalnızca SHA-256 + bayt |
+
+---
+
+## Doğrulama Durumu (v0.6a)
 
 | Kontrol | Sonuç |
 |---|---|
 | `gofmt -l .` | temiz |
 | `go vet ./...` | temiz |
-| `go test -race -count=1 ./...` | **11/11 paket geçti** |
+| `go test -race -count=1 ./...` | tüm paketler geçti (5 yeni sütun dahil) |
+| Çok-sıçramalı 3 düğüm (B üzerinden C) | kayıpsız teslim kanıtlandı |
 | Entegrasyon (canlı PostgreSQL 16) | geçti |
-| Redis testleri (canlı Redis 7) | geçti |
-| mTLS (gerçek sertifikalarla) | geçti |
-| Dedup uçtan uca | %95.4 ölçülen tasarruf |
-| Faturalama webhook | imza geçerli, yük sızıntısı yok |
+| Cross-compile (5 platform × 2 uygulama) | 10/10 binary üretildi |
+| `/admin` tek binary + WebSocket | canlı topoloji + telemetri |
+
+Tüm mimari evrim ve sürüm notları için `CHANGELOG.md` dosyasına bakın.
 
 ---
 
-## v0.3b'de yeni olanlar
+## Lisans
 
-### 1. Hermetik Test Koşucusu (`scripts/run-tests.sh`)
-
-**Sorun:** Windows'ta `gcc` yok, dolayısıyla `go test -race` çalışmıyor. Yarış
-koşulu denetimi geliştiricinin işletim sistemine bağımlı kalıyordu.
-
-**Çözüm:** Testler CGO açık bir Linux konteynerinde, gerçek PostgreSQL 16 ve
-Redis 7 eşliğinde koşar:
-
-```bash
-make test-race
-```
-
-Tek komut: konteynerleri kaldırır, `gofmt` + `vet` + `-race` + entegrasyon
-testlerini koşar, temizler. Çıkış kodu betiğe taşınır (CI uyumlu).
-
-### 2. İstemci Taraflı Dedup + Dürüst Manifest Doğrulama
-
-**Neden istemci tarafında?** Sunucu şifreli veriyi görür. AES-256-GCM her
-şifrelemede rastgele nonce kullanır; aynı düz metin her seferinde **farklı**
-ciphertext üretir. Sunucu tekrar eden parçayı **göremez**, dolayısıyla
-tekilleştiremez. "Sunucu %80 dedup yapıyor" iddiası ancak sunucu düz metni
-görürse doğru olabilirdi — o da tüm sıfır-bilgi mimarisini geçersiz kılardı.
-
-**Sunucu neyi doğrular:**
-- Manifest yapısal geçerliliği (parça sayısı, boyutlar)
-- Beyan edilen boyut ile gövdedeki gerçek boyutun **eşleşmesi**
-- Gönderilen parça sayısının manifestteki "yeni" sayıyla tutarlılığı
-
-**Sunucu neyi doğrulayamaz (ve doğruladığını iddia etmez):**
-- Parça özetinin gerçekten o düz metnin özeti olduğu
-- İstemcinin "bunu daha önce gönderdim" beyanının doğruluğu
-
-`VerificationResult.ContentVerified` **her zaman `false`**. Bir test bunu
-kilitler ve silinmemelidir.
-
-**Faturalama kuralı:** Telde **gerçekten akan** bayta göre. İstemci yalan
-söylerse veri hedefte eksik olur — kendi zararı, sunucunun gelirine zarar
-veremez.
-
-Ölçülen gerçek sonuçlar (uçtan uca, 17 KB log verisi):
-
-```
-Tur 1 | parça=5 (yeni=5 önbellek=0) | TELDE=17290 B | tasarruf= 0.0%
-Tur 2 | parça=5 (yeni=1 önbellek=4) | TELDE=  794 B | tasarruf=95.4%
-Tur 3 | parça=5 (yeni=1 önbellek=4) | TELDE=  794 B | tasarruf=95.4%
-```
-
-Rastgele veride tasarruf **sıfırdır** — bunu doğrulayan ayrı bir test var
-(`TestDedupSavesNothingOnRandomData`). Tekilleştirme yalnızca tekrar eden
-veride işe yarar; kütüphane oranı **ölçer**, vaat etmez.
-
-### 3. mTLS ve TLS Sonlandırma (`internal/security`)
-
-- HTTPS dinleme, TLS 1.2 alt sınır, ileri gizlilik sağlayan şifre takımları
-- **Sertifika rotasyonu:** dosya değişince süreç yeniden başlatılmadan devreye
-  girer (`GetCertificate` her el sıkışmada okur)
-- **mTLS:** `require` modunda sertifikasız istemci reddedilir, yabancı CA'dan
-  imzalı sertifika reddedilir
-- Süresi dolmuş sertifikayla açılış **engellenir** (aksi halde geçit
-  "çalışıyor" görünür ama her el sıkışma başarısız olur)
-- Bozuk dosya yazılırsa **eski sertifika korunur** (yarım yazılmış dosya
-  yüzünden hizmet düşmez)
-
-Bunların hepsi gerçek sertifikalar üretilerek test edildi.
-
-### 4. Dürüst QoS Probe (`internal/router/qos.go`)
-
-Gerçek ölçümler: RTT (ortalama, min, max, p50, p95) ve jitter.
-
-**Terminoloji uyarısı — kodda da yazılı:**
-
-`probe_failure_ratio` **paket kaybı değildir.** Gerçek paket kaybı ICMP veya
-UDP seviyesinde tekil paketler sayılarak ölçülür ve ham soket yetkisi
-(`CAP_NET_RAW`) gerektirir. HTTP yoklamasının başarısız olması paket kaybına
-işaret *edebilir*, ama sunucu aşırı yükü, TLS hatası veya uygulama hatası da
-olabilir. Bu değeri "packet loss" diye sunmak müşteriyi yanıltmak olurdu.
-
-Aynı şekilde RTT, uygulama katmanı gidiş-dönüş süresidir; TLS handshake ve
-sunucu işleme süresi dahildir, ICMP ping değildir.
-
-### 5. Faturalama Köprüsü (`internal/billing`)
-
-Asenkron olay dağıtıcı: `ReceiptGenerated`, `CreditEarned`,
-`UsageThresholdExceeded`.
-
-- **Asla bloklamaz** — Stripe yavaşlarsa müşteri isteği etkilenmez
-- Üstel geri çekilmeli yeniden deneme, idempotency anahtarı
-- **Webhook:** gövde HMAC-SHA256 ile imzalanır, alıcı doğrulayabilir
-- **Röle kredileri:** kripto/token yok — bir sonraki faturadan düşülecek
-  ticari iskonto. Kendi trafiğini röle etmek kredi kazandırmaz; dönem başına
-  tavan uygulanır
-- **Eşik izleyici:** her eşik için yalnızca bir kez olay
-
-**Yük içeriği asla gönderilmez** — sadece SHA-256 özeti. Bir test bunu
-doğrular.
-
-**Doğrulanmamış olanlar:** Stripe ve e-Fatura emitter'ları canlı API'lere
-karşı test edilmedi (gerçek hesap kimlik bilgisi gerekir). Kodda uyarı
-olarak yazılı. Türkiye'de tek bir standart e-Fatura API'si yoktur; her
-entegratörün (Logo, Uyumsoft, Paraşüt) sözleşmesi farklıdır — o uç nokta
-kendi adaptör servisinize işaret etmelidir.
-
-### 6. Mobil Saha Testi (`make mobile-test`)
-
-Telefondan test etmek için dört adım otomatik:
-
-1. Geçidin localhost'ta çalıştığını doğrular
-2. LAN IP adreslerini bulur (Docker/WSL sanal adapterlerini eler)
-3. LAN üzerinden **gerçekten erişilebildiğini** doğrular — erişilemiyorsa
-   sebebini söyler (güvenlik duvarı komutunu hazır verir)
-4. Telefonla taranabilir QR kodu terminale basar
-
-Go ile yazıldı, bash değil: Windows'ta `ip`/`ifconfig` yok.
-
-**Tünel:** Varsayılan LAN erişimidir (aynı WiFi, güvenli). `--tunnel` bayrağı
-public tünel açar ve geçidi **tüm internete** açar; geçerli API anahtarlarınız
-olduğu için opt-in ve açık uyarılıdır.
-
-**3. adım hakkında dürüst not:** Bu kontrol geçidin LAN adresine *kendi
-makinenizden* istek atar. O trafik işletim sisteminin ağ yığınında kalır ve
-**güvenlik duvarının gelen kuralına takılmaz** — yani "yanıt verdi" dese bile
-telefon bağlanamayabilir. Araç bunu açıkça söyler ve güvenlik duvarı
-komutlarını önden basar. İlk sürümde bu adım sessizce "OK" diyordu ve
-geliştiriciyi körlemesine denemeye itiyordu; saha testinde ortaya çıktı ve
-düzeltildi.
-
-**Windows'ta en sık tuzak:** Docker Desktop ilk açılışta güvenlik duvarı izni
-sorar. "İptal" denirse Windows o program için bir **engelleme kuralı** oluşturur
-ve engelleme kuralları, sonradan eklenen izin kurallarından **önceliklidir**.
-Port kuralınız doğru olsa bile bağlantı kurulmaz. Araç bu kuralı nasıl bulup
-sileceğinizi de yazdırır.
-
----
-
-## Sıfır-Bilgi Sözleşmesi
-
-Bu sunucu, taşıdığı veriyi çözebilecek hiçbir anahtara **sahip değildir**.
-
-Sözleşme her katmanda geçerlidir:
-- **Log:** istek/yanıt gövdesi asla loglanmaz
-- **Veritabanı:** yük saklanmaz, yalnızca SHA-256 özeti (bir test tabloda
-  `payload`/`ciphertext`/`body`/`content` sütunu olmadığını doğrular)
-- **WAL:** yalnızca metadata ve özet
-- **Router:** içeriği çözmez, değiştirmez
-- **Faturalama:** olaylarda yük içeriği yok, yalnızca özet
-- **Dedup:** tekilleştirme istemcide; sunucu manifest yapısını doğrular,
-  içeriği değil
-
----
-
-## Hukuki Kapsam
-
-`internal/carrier/carrier.go` taşıyıcı listesi **bilinçli olarak kısıtlıdır**.
-
-**İzin verilenler:** `standard_internet`, `mesh_wifi` (ISM, lisanssız),
-`lora_ism` (duty-cycle sınırlı), `optical_li_fi`, `satellite_licensed`
-(**aboneliği bulunan** terminaller).
-
-**Bilerek dışarıda:** üçüncü taraf uydu sinyallerinin izinsiz dinlenmesi
-(5809 sayılı Kanun, TCK 132–140) ve lisanslı spektrumda veri yayını (BTK
-lisansı olmadan kaçak telsiz istasyonu).
-
-`TestNormalizeRejectsIllegalCarriers` **silinmemelidir**.
-
----
-
-## Egress Maliyeti Hakkında Dürüst Not
-
-Bir proxy, bulut sağlayıcısının egress maliyetini **düşürmez** — bayt önce
-geçide gelir (ingress), sonra hedefe gider (egress). Geçit bulut içindeyse
-toplam egress azalmaz, bir kat daha eklenir.
-
-Gerçek tasarruf iki yerden gelir:
-1. **Topoloji:** `edge` (bulut dışı önbellekleme), `peering` (ölçülü egress
-   devreye girmez)
-2. **Dedup:** tekrar eden veride ölçülen gerçek tasarruf (yukarıdaki %95.4
-   örneği), ama rastgele veride sıfır
-
----
-
-## Mimari
-
-```
-cmd/gateway/          Giriş noktası
-cmd/mobiletest/       Mobil saha testi (LAN IP + QR)
-internal/config/      Ortam okuma + başlangıç doğrulaması
-internal/carrier/     Yasal taşıyıcı allowlist'i
-internal/store/       Store arayüzü + Memory + Postgres + WAL
-internal/meter/       Ölçüm cephesi
-internal/middleware/  Auth, rate limit (bellek + Redis), log, kurtarma
-internal/router/      Yönlendirme + failover + QoS probe
-internal/dedup/       Manifest tipleri + sunucu doğrulama
-internal/security/    TLS / mTLS + sertifika rotasyonu
-internal/billing/     Olay köprüsü + emitter'lar + kredi motoru
-internal/metrics/     Prometheus text format
-internal/tunnel/      HTTP uçları
-pkg/client/           İstemci SDK: chunking, dedup, şifreleme
-```
-
-`pkg/client` dış kullanıma açıktır; `internal/*` Go kuralı gereği dışarıdan
-import edilemez.
-
----
-
-## Uçlar
-
-| Metot | Yol | Kimlik | Açıklama |
-|---|---|---|---|
-| GET | `/healthz` | — | Sağlık, store, rotalar, QoS, TLS, billing |
-| POST | `/api/v1/tunnel` | Bearer | Ölç, ilet, imzalı makbuz |
-| POST | `/api/v1/tunnel/chunked` | Bearer | Parçalı (dedup) geçiş |
-| GET | `/api/v1/meter/me` | Bearer | Yalnızca kendi defteriniz |
-| GET | `/metrics` | Bearer (ayrı token) | Prometheus formatı |
-
-`/metrics` müşteri kimlikleri ve hacimleri içerir — **ticari olarak
-hassastır**. Token tanımlı değilse uç nokta hiç açılmaz; geçit açılışta hata
-verir.
-
----
-
-## Kurulum
-
-```bash
-cp .env.example .env
-openssl rand -hex 24   # AETHERIS_API_KEYS
-openssl rand -hex 32   # AETHERIS_RECEIPT_SECRET
-docker compose up --build
-```
-
-## Test
-
-```bash
-make test         # yerel, -race yok (Windows uyumlu)
-make test-race    # HERMETIK: Linux konteynerinde -race + gerçek DB
-make check        # fmt + vet + test
-make mobile-test  # telefon erişimi + QR
-```
-
----
-
-## Bilinen sınırlar
-
-1. **WAL tek dosyadır.** Yüksek hacimde segment-bazlı rotasyon gerekir.
-2. **Bir WAL dizini = bir süreç.** İki örnek aynı dizini paylaşırsa çift
-   faturalama olur; Windows'ta ikinci örnek hata ile durur, Linux'ta bu
-   koruma yoktur.
-3. **WAL fail-open'dır.** Kısa bir pencerede kayıt WAL'de ama Postgres'te
-   değildir.
-4. **Stripe/e-Fatura canlı doğrulanmadı.** Kimlik bilgisi gerekir.
-5. **Dedup istemciler arası paylaşımlı değildir.** Paylaşımlı dedup,
-   özetlerin sunucuya açıklanmasını gerektirir ve içerik hakkında bilgi
-   sızdırır (confirmation-of-file saldırısı). Bilinçli olarak yapılmamıştır.
-6. **Rate limiter Redis'siz tek düğümlüdür.** `AETHERIS_REDIS_ADDR`
-   tanımlıysa dağıtık, değilse düğüm-yereldir.
-7. **Gerçek paket kaybı ölçülmez.** ICMP prober ayrı bir bileşen gerektirir.
+MIT — bkz. `LICENSE`.

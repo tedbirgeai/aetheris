@@ -27,7 +27,6 @@ func TestWALTruncateAtomicSwap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer wal.Close()
 
 	// Cok sayida kayit yaz: her basarili batch bir truncate (swap) tetikler.
 	const total = 200
@@ -58,14 +57,20 @@ func TestWALTruncateAtomicSwap(t *testing.T) {
 		t.Fatalf("beklenen %d kayit, alt store'da %d", total, snap.TotalRequests)
 	}
 
-	// Gecici swap dosyasi ARTIK KALMAMALI.
-	if _, err := os.Stat(filepath.Join(dir, "aetheris.wal.tmp")); !os.IsNotExist(err) {
-		t.Fatalf("gecici swap dosyasi temizlenmemis: %v", err)
-	}
-
 	// Asil WAL dosyasi hala acilabilir/yazilabilir olmali (handle saglikli).
 	if err := wal.Record(ctx, Usage{ClientID: "c", PayloadSHA: "son", BytesIn: 1}); err != nil {
 		t.Fatalf("swap sonrasi yazma basarisiz: %v", err)
+	}
+
+	// WAL'i KAPAT: bu, arka plandaki flusher'i durdurur ve son rotasyonu
+	// tamamlar. Ancak bundan sonra gecici .tmp dosyasi kesin olarak kalmamis
+	// olmalidir (calisirken .tmp rotasyon sirasinda gecici olarak var olabilir;
+	// bu yuzden kontrol yalnizca kapanistan SONRA anlamlidir).
+	if err := wal.Close(); err != nil {
+		t.Fatalf("WAL kapatilamadi: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "aetheris.wal.tmp")); !os.IsNotExist(err) {
+		t.Fatalf("kapanis sonrasi gecici swap dosyasi temizlenmemis: %v", err)
 	}
 }
 

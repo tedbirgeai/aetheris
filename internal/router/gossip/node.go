@@ -97,6 +97,24 @@ func (n *Node) Peers() int {
 	return len(n.peers)
 }
 
+// PeerInfo, bilinen bir komsunun kimlik ve adresidir.
+type PeerInfo struct {
+	NodeID string
+	Addr   string
+}
+
+// PeerList, o an bilinen tum komsularin (kimlik, adres) listesini dondurur.
+// Dashboard topoloji haritasi bunu kullanir.
+func (n *Node) PeerList() []PeerInfo {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	out := make([]PeerInfo, 0, len(n.peers))
+	for id, addr := range n.peers {
+		out = append(out, PeerInfo{NodeID: id, Addr: addr})
+	}
+	return out
+}
+
 // Rounds, tamamlanan gossip turu sayisi (gozlem).
 func (n *Node) Rounds() uint64 { return n.rounds.Load() }
 

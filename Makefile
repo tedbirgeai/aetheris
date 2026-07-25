@@ -1,9 +1,16 @@
 GO ?= go
 
-.PHONY: build test race test-race check fmt vet cover run docker up down integration mobile-test clean
+.PHONY: build test race test-race check fmt vet cover run docker up down integration mobile-test clean release cli
 
 build:
 	$(GO) build -trimpath -ldflags="-s -w" -o bin/aetheris ./cmd/gateway
+
+cli:
+	$(GO) build -trimpath -ldflags="-s -w" -o bin/aetheris-cli ./cmd/aetheris-cli
+
+# release: tum platformlar icin cross-compiled binary uretir (dist/).
+release:
+	bash scripts/build-release.sh
 
 fmt:
 	gofmt -w .

@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -25,6 +27,7 @@ import (
 	"github.com/tedbirgeai/aetheris/internal/meter"
 	"github.com/tedbirgeai/aetheris/internal/middleware"
 	"github.com/tedbirgeai/aetheris/internal/router"
+	"github.com/tedbirgeai/aetheris/internal/router/gossip"
 	"github.com/tedbirgeai/aetheris/internal/security"
 	"github.com/tedbirgeai/aetheris/internal/store"
 	"github.com/tedbirgeai/aetheris/internal/tunnel"
@@ -229,6 +232,35 @@ func run(logger *slog.Logger) error {
 		))
 		logger.Info("Prometheus metrik ucu aktif", "path", "/metrics")
 	}
+	// --- v0.6a: Gossip mesh dugumu ---
+	var meshNode *gossip.Node
+	if cfg.MeshEnabled {
+		nodeID := cfg.MeshNodeID
+		if nodeID == "" {
+			nodeID = "gw-" + cfg.MeshAddr
+		}
+		tr, terr := gossip.NewUDPTransport(cfg.MeshAddr)
+		if terr != nil {
+			return fmt.Errorf("mesh UDP transport kurulamadi: %w", terr)
+		}
+		gcfg := gossip.Config{ID: nodeID, Logger: logger}
+		if dport := discoveryPort(cfg.MeshAddr); dport > 0 {
+			if beacon, berr := gossip.NewUDPBeacon(dport); berr == nil {
+				gcfg.Beacon = beacon
+			} else {
+				logger.Warn("mesh beacon kurulamadi, statik komsularla devam", "err", berr)
+			}
+		}
+		meshNode = gossip.NewNode(tr, gcfg)
+		for _, seed := range cfg.MeshSeeds {
+			meshNode.AddPeer(seed, seed)
+		}
+		go meshNode.Run(startCtx)
+		logger.Info("Gossip mesh dugumu aktif", "id", nodeID, "addr", tr.Addr(),
+			"seeds", len(cfg.MeshSeeds))
+		defer func() { _ = meshNode.Close() }()
+	}
+
 	// --- v0.5a: Gomulu yonetim paneli ---
 	if cfg.AdminEnabled {
 		if cfg.AdminToken == "" {
@@ -238,7 +270,7 @@ func run(logger *slog.Logger) error {
 		dash, derr := dashboard.New(dashboard.Config{
 			AdminToken: cfg.AdminToken,
 			Provider: dashboard.ProviderFunc(func() dashboard.Telemetry {
-				return buildTelemetry(cfg, walStore, m)
+				return buildTelemetry(cfg, walStore, m, meshNode)
 			}),
 		})
 		if derr != nil {
@@ -322,7 +354,7 @@ func run(logger *slog.Logger) error {
 // Not: Gossip mesh bu surecte calismadigindan Nodes bos gelir (durust: bu
 // gateway ornegi mesh dugumu degildir). WAL derinligi, disk kullanimi ve
 // istemci basi bayt dokumleri canlidir.
-func buildTelemetry(cfg *config.Config, wal *store.WALStore, m *meter.Meter) dashboard.Telemetry {
+func buildTelemetry(cfg *config.Config, wal *store.WALStore, m *meter.Meter, mesh *gossip.Node) dashboard.Telemetry {
 	t := dashboard.Telemetry{TS: time.Now().Unix()}
 
 	if wal != nil {
@@ -331,6 +363,24 @@ func buildTelemetry(cfg *config.Config, wal *store.WALStore, m *meter.Meter) das
 	}
 	if cfg.WALEnabled {
 		t.DiskBytes = dirSize(cfg.WALDir)
+	}
+
+	// Gossip mesh topolojisi: kesfedilen komsular canli dugum haritasina.
+	if mesh != nil {
+		t.Nodes = append(t.Nodes, dashboard.NodeInfo{
+			ID:      shortNode(mesh.ID),
+			Addr:    mesh.Addr(),
+			Carrier: "self",
+			Alive:   true,
+		})
+		for _, p := range mesh.PeerList() {
+			t.Nodes = append(t.Nodes, dashboard.NodeInfo{
+				ID:      shortNode(p.NodeID),
+				Addr:    p.Addr,
+				Carrier: "gossip",
+				Alive:   true,
+			})
+		}
 	}
 
 	// Kredi/bayt dokumu: meter snapshot'indan istemci basi bayt toplamlari.
@@ -360,6 +410,28 @@ func dirSize(dir string) uint64 {
 		return nil
 	})
 	return total
+}
+
+// discoveryPort, mesh UDP adresinden (":7946") kesif broadcast portunu turetir
+// (transport portu + 1). Cozulemezse 0 doner (beacon atlanir).
+func discoveryPort(addr string) int {
+	_, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return 0
+	}
+	p, err := strconv.Atoi(portStr)
+	if err != nil || p <= 0 || p >= 65535 {
+		return 0
+	}
+	return p + 1
+}
+
+// shortNode, uzun dugum kimliklerini panelde kisaltir.
+func shortNode(id string) string {
+	if len(id) > 12 {
+		return id[:12] + "…"
+	}
+	return id
 }
 
 func buildStore(ctx context.Context, cfg *config.Config, logger *slog.Logger) (store.Store, error) {

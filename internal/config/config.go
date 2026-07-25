@@ -88,6 +88,17 @@ type Config struct {
 	// AdminToken, panele erisim icin zorunlu oturum jetonu. AdminEnabled
 	// true iken bos olamaz (fail-closed).
 	AdminToken string
+
+	// --- v0.6a: Gossip mesh dugumu ---
+	// MeshEnabled true ise gateway ayni zamanda bir gossip mesh dugumu olur;
+	// /admin topolojisi kesfedilen komsulari canli gosterir.
+	MeshEnabled bool
+	// MeshNodeID, bu dugumun kimligi (bos ise adresten turetilir).
+	MeshNodeID string
+	// MeshAddr, gossip UDP dinleme adresi (ornek ":7946").
+	MeshAddr string
+	// MeshSeeds, baslangic komsu adresleri (virgulle ayrilmis).
+	MeshSeeds []string
 }
 
 // RouteConfig, tek bir yonlendirme hedefidir.
@@ -154,6 +165,11 @@ func Load() (*Config, error) {
 
 		AdminEnabled: strings.EqualFold(getEnv("AETHERIS_ADMIN", "false"), "true"),
 		AdminToken:   strings.TrimSpace(os.Getenv("AETHERIS_ADMIN_TOKEN")),
+
+		MeshEnabled: strings.EqualFold(getEnv("AETHERIS_MESH", "false"), "true"),
+		MeshNodeID:  strings.TrimSpace(os.Getenv("AETHERIS_MESH_NODE_ID")),
+		MeshAddr:    strings.TrimSpace(getEnv("AETHERIS_MESH_ADDR", ":7946")),
+		MeshSeeds:   parseCSV(os.Getenv("AETHERIS_MESH_SEEDS")),
 	}
 
 	keys, err := parseAPIKeys(os.Getenv("AETHERIS_API_KEYS"))
@@ -379,6 +395,21 @@ func getEnvFloat(key string, fallback float64) float64 {
 }
 
 // parseThresholds, "1000000,5000000" bicimini ayristirir.
+// parseCSV, virgulle ayrilmis bir listeyi bosluklari kirparak dondurur.
+func parseCSV(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 func parseThresholds(raw string) []uint64 {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {

@@ -11,3 +11,5 @@
 coverage.html
 /wal/
 wal/
+dist/
+bin/
