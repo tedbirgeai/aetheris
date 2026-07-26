@@ -43,9 +43,9 @@ func TestNilExitPeerIsOffGrid(t *testing.T) {
 
 func TestStatusHuman(t *testing.T) {
 	cases := map[Status]string{
-		StatusDirect:  "Direct Internet",
+		StatusDirect:  "Direct WAN",
 		StatusRelayed: "Relayed via Peer",
-		StatusOffGrid: "Off-Grid Mesh Only",
+		StatusOffGrid: "Isolated Mesh Only",
 	}
 	for s, want := range cases {
 		if s.Human() != want {

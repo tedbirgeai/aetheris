@@ -31,11 +31,11 @@ const (
 func (s Status) Human() string {
 	switch s {
 	case StatusDirect:
-		return "Direct Internet"
+		return "Direct WAN"
 	case StatusRelayed:
 		return "Relayed via Peer"
 	case StatusOffGrid:
-		return "Off-Grid Mesh Only"
+		return "Isolated Mesh Only"
 	default:
 		return "Unknown"
 	}

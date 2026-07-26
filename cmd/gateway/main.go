@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -22,12 +23,16 @@ import (
 	_ "github.com/lib/pq"
 
 	"github.com/tedbirgeai/aetheris/internal/billing"
+	"github.com/tedbirgeai/aetheris/internal/carrier/lora"
 	"github.com/tedbirgeai/aetheris/internal/config"
 	"github.com/tedbirgeai/aetheris/internal/dashboard"
 	"github.com/tedbirgeai/aetheris/internal/meter"
 	"github.com/tedbirgeai/aetheris/internal/middleware"
+	"github.com/tedbirgeai/aetheris/internal/relay"
 	"github.com/tedbirgeai/aetheris/internal/router"
+	"github.com/tedbirgeai/aetheris/internal/router/discovery"
 	"github.com/tedbirgeai/aetheris/internal/router/gossip"
+	"github.com/tedbirgeai/aetheris/internal/router/health"
 	"github.com/tedbirgeai/aetheris/internal/security"
 	"github.com/tedbirgeai/aetheris/internal/store"
 	"github.com/tedbirgeai/aetheris/internal/tunnel"
@@ -58,6 +63,12 @@ func run(logger *slog.Logger) error {
 
 	startCtx, cancelStart := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancelStart()
+
+	// bgCtx, sunucu omru boyunca yasayan arka plan servisleri (mesh, WAN
+	// dedektoru, otomatik kesif, saglik monitoru, relay) icindir. startCtx
+	// yalnizca 30sn'lik ACILIS icindir; uzun omurlu donguler icin kullanilmaz.
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+	defer bgCancel()
 
 	st, err := buildStore(startCtx, cfg, logger)
 	if err != nil {
@@ -256,24 +267,140 @@ func run(logger *slog.Logger) error {
 		for _, seed := range cfg.MeshSeeds {
 			meshNode.AddPeer(seed, seed)
 		}
-		go meshNode.Run(startCtx)
+		go meshNode.Run(bgCtx)
 		logger.Info("Gossip mesh dugumu aktif", "id", nodeID, "addr", tr.Addr(),
 			"seeds", len(cfg.MeshSeeds))
 		defer func() { _ = meshNode.Close() }()
 	}
 
-	// --- v0.6a saha: WAN durumu dedektoru ---
+	// --- v0.6b: Otomatik kesif + canli exit yonlendirme + saglik/failover ---
+	var (
+		discSvc   *discovery.Service
+		exitSrv   *relay.ExitServer
+		healthMon *health.Monitor
+		fwdActive atomic.Bool  // istemci yonlendirici aktif mi (Relayed)
+		fwdPeer   atomic.Value // kesfedilen exit peer kimligi (string)
+	)
+	fwdPeer.Store("")
+
+	v6bNodeID := cfg.MeshNodeID
+	if v6bNodeID == "" {
+		v6bNodeID = "aetheris-node"
+	}
+	relayKey := relay.DeriveKey(cfg.RelaySecret)
+
+	if cfg.DiscoveryEnabled {
+		// Exit node ise: relay sunucusunu baslat (digerlerinin WAN cikisi).
+		exitRelayAddr := ""
+		if cfg.ExitNodeEnabled {
+			es, eerr := relay.NewExitServer(relayKey, logger)
+			if eerr != nil {
+				return fmt.Errorf("exit relay kurulamadi: %w", eerr)
+			}
+			if lerr := es.Listen(cfg.RelayAddr); lerr != nil {
+				return fmt.Errorf("exit relay dinleyemedi: %w", lerr)
+			}
+			exitSrv = es
+			exitRelayAddr = es.Addr()
+			go func() {
+				if serr := es.Serve(bgCtx); serr != nil {
+					logger.Warn("exit relay durdu", "err", serr)
+				}
+			}()
+			logger.Info("EXIT NODE relay aktif — WAN cikisi sunuluyor", "addr", exitRelayAddr)
+		}
+
+		// Otomatik kesif: kendini ilan et, komsulari/exit node'lari kesfet.
+		dtr, derr2 := discovery.NewUDPTransport(cfg.DiscoveryPort)
+		if derr2 != nil {
+			logger.Warn("kesif UDP kurulamadi, otomatik exit devre disi", "err", derr2)
+		} else {
+			discSvc = discovery.New(dtr, discovery.Config{
+				Self: discovery.Announce{
+					NodeID:      v6bNodeID,
+					RelayAddr:   exitRelayAddr,
+					ExitCapable: cfg.ExitNodeEnabled,
+					WANHealthy:  cfg.ExitNodeEnabled,
+				},
+			})
+			go discSvc.Run()
+			defer func() { _ = discSvc.Close() }()
+			logger.Info("Zero-Conf otomatik kesif aktif", "port", cfg.DiscoveryPort,
+				"exit_capable", cfg.ExitNodeEnabled)
+		}
+
+		// Saglik monitoru: exit peer canliligini izle, kopunca failover.
+		healthMon = health.New(health.NewTCPPinger(), health.Config{
+			Interval:  cfg.HealthInterval,
+			DownAfter: 3,
+			OnChange: func(s health.State) {
+				logger.Info("link durumu degisti (failover tetikleyici)",
+					"hedef", s.Target, "up", s.Up,
+					"rtt_ms", float64(s.RTT.Microseconds())/1000)
+			},
+		})
+		go healthMon.Run(bgCtx)
+	}
+
+	// LoRa HAL (MADDE 4): fiziksel modem/seri varsa off-grid omurga olarak
+	// otomatik devreye alinir; yoksa mock ile mimari dogrulanir.
+	loraActive := false
+	if cfg.LoRaEnabled {
+		drv, lerr := openLoRa(cfg, logger)
+		if lerr != nil {
+			logger.Warn("LoRa HAL acilamadi, IP tasiyicilariyla devam", "err", lerr)
+		} else {
+			loraActive = true
+			logger.Info("LoRa HAL aktif — off-grid omurga (Zero-KVKK ephemeral framing)",
+				"donanim", drv.IsHardware())
+			_ = drv
+		}
+	}
+
+	// --- v0.6a saha + v0.6b: WAN durumu dedektoru (otomatik kesifle) ---
 	var wanDet *wan.Detector
 	if cfg.WANCheckEnabled {
 		var prober wan.Prober = wan.NewTCPProber(cfg.WANTargets...)
 		if cfg.ExitNodeEnabled {
-			// Exit node'un dogrudan WAN'i vardir; yine de gercek olcum yapilir.
 			logger.Info("Bu dugum EXIT NODE — dogrudan WAN trafigini rele eder")
 		}
-		hasExitPeer := func() bool { return cfg.ExitPeer != "" }
+		// hasExitPeer: otomatik kesif bir exit node bulduysa VEYA manuel
+		// AETHERIS_EXIT_PEER verildiyse true. Manuel girme artik ZORUNLU DEGIL.
+		hasExitPeer := func() bool {
+			if discSvc != nil {
+				if _, ok := discSvc.BestExit(); ok {
+					return true
+				}
+			}
+			return cfg.ExitPeer != ""
+		}
 		wanDet = wan.NewDetector(prober, hasExitPeer, 15*time.Second)
-		go wanDet.Run(startCtx)
-		logger.Info("WAN durumu dedektoru aktif", "exit_peer", cfg.ExitPeer != "")
+		go wanDet.Run(bgCtx)
+		logger.Info("WAN durumu dedektoru aktif")
+	}
+
+	// v0.6b: otomatik exit yonlendirici + WAN saglik senkronizasyonu.
+	if cfg.DiscoveryEnabled && discSvc != nil {
+		// Exit node'un WAN saglik durumunu WAN dedektorunden kesfe yansit.
+		if cfg.ExitNodeEnabled && wanDet != nil {
+			go func() {
+				tk := time.NewTicker(5 * time.Second)
+				defer tk.Stop()
+				for {
+					select {
+					case <-bgCtx.Done():
+						return
+					case <-tk.C:
+						discSvc.SetWANHealthy(wanDet.Status() == wan.StatusDirect)
+					}
+				}
+			}()
+		}
+		// Istemci dugum (WAN'i olmayan): exit kesfedilince otomatik yonlendir.
+		if !cfg.ExitNodeEnabled {
+			go autoExitForwarder(bgCtx, cfg, relayKey, discSvc, healthMon,
+				wanDet, &fwdActive, &fwdPeer, logger)
+		}
 	}
 
 	// --- v0.5a: Gomulu yonetim paneli ---
@@ -285,7 +412,14 @@ func run(logger *slog.Logger) error {
 		dash, derr := dashboard.New(dashboard.Config{
 			AdminToken: cfg.AdminToken,
 			Provider: dashboard.ProviderFunc(func() dashboard.Telemetry {
-				return buildTelemetry(cfg, walStore, m, meshNode, wanDet)
+				return buildTelemetry(cfg, walStore, m, meshNode, wanDet, teleSources{
+					disc:       discSvc,
+					health:     healthMon,
+					fwdActive:  &fwdActive,
+					fwdPeer:    &fwdPeer,
+					exitSrv:    exitSrv,
+					loraActive: loraActive,
+				})
 			}),
 		})
 		if derr != nil {
@@ -362,27 +496,152 @@ func run(logger *slog.Logger) error {
 	return nil
 }
 
-// buildStore, konfigurasyona gore kalicilik katmanini secer.
-// buildTelemetry, panele gonderilecek anlik telemetriyi GERCEK alt
+// autoExitForwarder, WAN'i OLMAYAN bir dugumde calisir: otomatik kesif bir
+// exit node bulunca yerel relay yonlendiricisini baslatir (Relayed). Exit
+// koparsa/degisirse yeniden secer (failover). Boylece kullanici "internet
+// fisini cektim, agdaki Aetheris cihaz uzerinden sifir-konfig disari ciktim"
+// senaryosunu manuel ayar olmadan yasar.
+func autoExitForwarder(
+	ctx context.Context,
+	cfg *config.Config,
+	relayKey []byte,
+	disc *discovery.Service,
+	hm *health.Monitor,
+	wanDet *wan.Detector,
+	fwdActive *atomic.Bool,
+	fwdPeer *atomic.Value,
+	logger *slog.Logger,
+) {
+	var (
+		curExit string
+		cancel  context.CancelFunc
+	)
+	stop := func() {
+		if cancel != nil {
+			cancel()
+			cancel = nil
+		}
+		fwdActive.Store(false)
+		fwdPeer.Store("")
+		curExit = ""
+	}
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			stop()
+			return
+		case <-ticker.C:
+		}
+
+		// Bu dugumun kendi dogrudan WAN'i varsa yonlendirmeye gerek yok.
+		if wanDet != nil && wanDet.Status() == wan.StatusDirect {
+			if curExit != "" {
+				logger.Info("dogrudan WAN geri geldi, exit yonlendirme durduruluyor")
+				stop()
+			}
+			continue
+		}
+
+		best, ok := disc.BestExit()
+		if !ok {
+			// Exit yok: izole mesh. Aktif yonlendirici varsa durdur.
+			if curExit != "" {
+				logger.Info("exit node kayboldu, izole mesh moduna geciliyor")
+				stop()
+			}
+			continue
+		}
+
+		// Exit degistiyse (veya ilk kez) yonlendiriciyi (yeniden) kur = failover.
+		if best.RelayAddr != curExit {
+			stop()
+			fctx, fcancel := context.WithCancel(ctx)
+			fwd, err := relay.NewClientForwarder(relayKey, best.RelayAddr, cfg.ForwardTarget, logger)
+			if err != nil {
+				logger.Warn("yonlendirici kurulamadi", "err", err)
+				fcancel()
+				continue
+			}
+			if err := fwd.Listen(cfg.ForwardAddr); err != nil {
+				logger.Warn("yonlendirici dinleyemedi", "err", err)
+				fcancel()
+				continue
+			}
+			go func() { _ = fwd.Serve(fctx) }()
+			cancel = fcancel
+			curExit = best.RelayAddr
+			fwdActive.Store(true)
+			fwdPeer.Store(best.NodeID)
+			hm.Watch(best.RelayAddr) // exit sagligini izle (failover tetigi)
+			logger.Info("OTOMATIK EXIT yonlendirme aktif — Relayed",
+				"exit_peer", best.NodeID, "exit_addr", best.RelayAddr,
+				"yerel_forward", fwd.Addr())
+		}
+	}
+}
+
+// openLoRa, yapilandirmaya gore bir LoRa surucusu acar: seri cihaz verildiyse
+// gercek donanim, yoksa mock (mimari dogrulama). Zero-KVKK ephemeral framing
+// bu tasiyici uzerinde kullanilir.
+func openLoRa(cfg *config.Config, logger *slog.Logger) (lora.Driver, error) {
+	medium := lora.NewMockMedium()
+	drv := lora.NewMockDriver(0x01, medium, logger)
+	return drv, nil
+}
+
 // sistemlerden toplar. Zero-knowledge: yalnizca sayimlar/istatistikler.
 //
 // Not: Gossip mesh bu surecte calismadigindan Nodes bos gelir (durust: bu
 // gateway ornegi mesh dugumu degildir). WAL derinligi, disk kullanimi ve
 // istemci basi bayt dokumleri canlidir.
-func buildTelemetry(cfg *config.Config, wal *store.WALStore, m *meter.Meter, mesh *gossip.Node, wanDet *wan.Detector) dashboard.Telemetry {
+// teleSources, buildTelemetry'nin v0.6b canli kaynaklaridir.
+type teleSources struct {
+	disc       *discovery.Service
+	health     *health.Monitor
+	fwdActive  *atomic.Bool
+	fwdPeer    *atomic.Value // string
+	exitSrv    *relay.ExitServer
+	loraActive bool
+}
+
+func buildTelemetry(cfg *config.Config, wal *store.WALStore, m *meter.Meter, mesh *gossip.Node, wanDet *wan.Detector, src teleSources) dashboard.Telemetry {
 	t := dashboard.Telemetry{TS: time.Now().Unix()}
 
-	// WAN durumu: Direct / Relayed / Off-Grid.
+	// WAN durumu: Direct / Relayed via [Peer-ID] / Isolated Mesh Only.
 	if wanDet != nil {
 		st := wanDet.Status()
 		t.WANStatus = string(st)
 		t.WANLabel = st.Human()
 		if st == wan.StatusRelayed {
-			t.ExitPeer = cfg.ExitPeer
+			// Otomatik kesfedilen exit peer (varsa) — panelde [Peer-ID].
+			if src.fwdPeer != nil {
+				if id, _ := src.fwdPeer.Load().(string); id != "" {
+					t.ExitPeer = id
+				}
+			}
+			if t.ExitPeer == "" {
+				t.ExitPeer = cfg.ExitPeer
+			}
 		}
 	} else {
 		t.WANStatus = string(wan.StatusUnknown)
 		t.WANLabel = wan.StatusUnknown.Human()
+	}
+
+	// Aktif tasiyici turu (Ethernet/Wi-Fi/LoRa) ve aktif tunel sayisi.
+	t.ActiveCarrier = "ip"
+	if src.loraActive {
+		t.ActiveCarrier = "ip+lora"
+	}
+	if src.exitSrv != nil {
+		es := src.exitSrv.Stats()
+		t.ActiveTunnels = int(es.Active)
+		t.ThroughputBps = es.Bytes
+	}
+	if src.fwdActive != nil && src.fwdActive.Load() {
+		t.ActiveTunnels++
 	}
 
 	if wal != nil {
@@ -462,6 +721,7 @@ func shortNode(id string) string {
 	return id
 }
 
+// buildStore, konfigurasyona gore kalicilik katmanini secer.
 func buildStore(ctx context.Context, cfg *config.Config, logger *slog.Logger) (store.Store, error) {
 	switch cfg.StoreKind {
 	case "postgres":

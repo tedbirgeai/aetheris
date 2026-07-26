@@ -112,6 +112,26 @@ type Config struct {
 	// ExitNodeEnabled true ise bu dugum, dogrudan WAN'i olan bir EXIT NODE
 	// olarak digerlerinin trafigini internete rele eder.
 	ExitNodeEnabled bool
+
+	// --- v0.6b: otomatik kesif + canli relay + saglik + LoRa ---
+	// DiscoveryEnabled true ise Zero-Conf otomatik kesif calisir.
+	DiscoveryEnabled bool
+	// DiscoveryPort, UDP broadcast kesif portu.
+	DiscoveryPort int
+	// RelayAddr, exit node'un relay dinleme adresi (":9800").
+	RelayAddr string
+	// RelaySecret, relay AES-256 anahtarinin turetildigi ortak sir.
+	RelaySecret string
+	// ForwardAddr, istemci dugumun yerel yonlendirici dinleme adresi.
+	ForwardAddr string
+	// ForwardTarget, istemci trafiginin exit uzerinden ulasacagi WAN hedefi.
+	ForwardTarget string
+	// HealthInterval, link-saglik olcum araligi.
+	HealthInterval time.Duration
+	// LoRaEnabled true ise LoRa HAL off-grid omurga olarak devreye alinir.
+	LoRaEnabled bool
+	// LoRaSerial, fiziksel LoRa modeminin seri portu (bos ise mock).
+	LoRaSerial string
 }
 
 // RouteConfig, tek bir yonlendirme hedefidir.
@@ -188,6 +208,16 @@ func Load() (*Config, error) {
 		WANTargets:      parseCSV(os.Getenv("AETHERIS_WAN_TARGETS")),
 		ExitPeer:        strings.TrimSpace(os.Getenv("AETHERIS_EXIT_PEER")),
 		ExitNodeEnabled: strings.EqualFold(getEnv("AETHERIS_EXIT_NODE", "false"), "true"),
+
+		DiscoveryEnabled: strings.EqualFold(getEnv("AETHERIS_DISCOVERY", "false"), "true"),
+		DiscoveryPort:    parsePort(getEnv("AETHERIS_DISCOVERY_PORT", "7947")),
+		RelayAddr:        strings.TrimSpace(getEnv("AETHERIS_RELAY_ADDR", ":9800")),
+		RelaySecret:      strings.TrimSpace(getEnv("AETHERIS_RELAY_SECRET", "aetheris-default-relay")),
+		ForwardAddr:      strings.TrimSpace(getEnv("AETHERIS_FORWARD_ADDR", "127.0.0.1:1080")),
+		ForwardTarget:    strings.TrimSpace(os.Getenv("AETHERIS_FORWARD_TARGET")),
+		HealthInterval:   parseDurationDefault(getEnv("AETHERIS_HEALTH_INTERVAL", "3s"), 3*time.Second),
+		LoRaEnabled:      strings.EqualFold(getEnv("AETHERIS_LORA", "false"), "true"),
+		LoRaSerial:       strings.TrimSpace(os.Getenv("AETHERIS_LORA_SERIAL")),
 	}
 
 	keys, err := parseAPIKeys(os.Getenv("AETHERIS_API_KEYS"))
@@ -413,6 +443,24 @@ func getEnvFloat(key string, fallback float64) float64 {
 }
 
 // parseThresholds, "1000000,5000000" bicimini ayristirir.
+// parsePort, bir port dizesini int'e cevirir; gecersizse 0 doner.
+func parsePort(s string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || n < 0 || n > 65535 {
+		return 0
+	}
+	return n
+}
+
+// parseDurationDefault, sureyi ayristirir; gecersizse varsayilani dondurur.
+func parseDurationDefault(s string, def time.Duration) time.Duration {
+	d, err := time.ParseDuration(strings.TrimSpace(s))
+	if err != nil || d <= 0 {
+		return def
+	}
+	return d
+}
+
 // parseCSV, virgulle ayrilmis bir listeyi bosluklari kirparak dondurur.
 func parseCSV(raw string) []string {
 	raw = strings.TrimSpace(raw)

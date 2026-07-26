@@ -2,6 +2,41 @@
 
 Aetheris Protocol — sürüm geçmişi. Tarihler sürüm mühürleme anını yansıtır.
 
+## [v0.6b-turnkey-production] — Otonom Ağ: Otomatik Exit Routing, Failover, Zero-KVKK & B2B Panel
+
+Demo/parçalı yapılar üretim seviyesine çıkarıldı. "İnternet fişini çektim, ağdaki
+Aetheris cihaz üzerinden sıfır-konfigürasyonla otomatik dış dünyaya çıktım"
+senaryosu uçtan uca çalışır hale getirildi.
+
+### Eklendi
+- **Zero-Conf otomatik keşif** (`internal/router/discovery/`): UDP broadcast ile
+  eş ve exit node otomatik keşfi; SO_REUSEPORT ile aynı-host çok-düğüm. Manuel
+  `AETHERIS_EXIT_PEER` zorunluluğu kaldırıldı.
+- **Canlı exit relay** (`internal/relay/`): gerçek TCP üzerinden A→B(exit)→WAN
+  yönlendirme, AES-256-GCM. Gateway veri düzlemine canlı bağlandı.
+- **Canlı link-sağlık monitörü + failover** (`internal/router/health/`):
+  RTT/heartbeat/EWMA ölçümü, down tespiti, otomatik yeniden yönlendirme.
+- **Zero-KVKK ephemeral framing** (`internal/carrier/ephemeral/`): RF/Seri
+  katmanında IP/MAC baypas; 1B Magic + 8B dönen hedef hash + 12B nonce +
+  AES-256-GCM. Epoch rotasyonuyla ilişkilendirilemezlik.
+- **BLE/SoftAP HAL soyutlaması** (`internal/transport/driver/`): yerel donanım
+  sürücüleri için mimari zemin + registry + stub.
+- **Enterprise B2B dashboard** (`/admin`): Datadog/Cloudflare tarzı Slate
+  (#0f172a) tema; WAN rozeti "Relayed via [Peer-ID]", aktif taşıyıcı/RTT/tünel/
+  bant genişliği canlı; go:embed, sıfır CDN.
+- **Yasal/taşıyıcı denetimi** (`docs/TRANSPORT_AUDIT.md`): ISM/BTK KET, KVKK/GDPR
+  matrisi, BTK 5651 sorumluluk, Tampere/TAMP afet muafiyetleri.
+- **Otonom doğrulama betiği** (`scripts/test-mesh-relay.sh`): tek komutla çift
+  düğümlü A→B→WAN exit + "Relayed" panel kanıtı.
+- Gateway: uzun ömürlü `bgCtx` (önceki 30sn arka plan timeout hatası düzeltildi).
+
+### Değişti
+- `cmd/gateway`: discovery/relay/health/LoRa ana akışa bağlandı; otomatik exit
+  yönlendirici; WAN dedektörü keşfi danışıyor.
+- `internal/config`: `AETHERIS_DISCOVERY*`, `RELAY_*`, `FORWARD_*`,
+  `HEALTH_INTERVAL`, `LORA*` ortam değişkenleri.
+- WAN etiketleri: "Direct WAN" / "Relayed via Peer" / "Isolated Mesh Only".
+
 ## [v0.6a] — Off-Grid Saha Testi: WAN Durumu & Exit Node (nokta güncelleme)
 
 ### Eklendi

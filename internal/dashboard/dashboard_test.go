@@ -39,7 +39,7 @@ func TestServesEmbeddedAssets(t *testing.T) {
 
 	for _, tc := range []struct{ path, wantType, mustContain string }{
 		{"/admin?token=gizli-admin-jetonu", "text/html", "AETHERIS"},
-		{"/admin/style.css?token=gizli-admin-jetonu", "text/css", "--accent"},
+		{"/admin/style.css?token=gizli-admin-jetonu", "text/css", "--bg"},
 		{"/admin/app.js?token=gizli-admin-jetonu", "application/javascript", "WebSocket"},
 	} {
 		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
@@ -225,7 +225,7 @@ func TestWebSocketLiveTelemetry(t *testing.T) {
 	if tel.WANStatus != "off_grid" {
 		t.Fatalf("WAN durumu off_grid olmali, %q", tel.WANStatus)
 	}
-	if tel.WANLabel != "Off-Grid Mesh Only" {
+	if tel.WANLabel != "Isolated Mesh Only" {
 		t.Fatalf("WAN etiketi otomatik dolmali, %q", tel.WANLabel)
 	}
 	if tel.TS == 0 {

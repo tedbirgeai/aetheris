@@ -56,6 +56,8 @@ type Telemetry struct {
 	WANLabel string `json:"wan_label"`
 	// ExitPeer, Relayed durumda internete cikilan komsu dugum (varsa).
 	ExitPeer string `json:"exit_peer,omitempty"`
+	// ActiveCarrier, o an kullanilan tasiyici turu (ip / ip+lora / lora).
+	ActiveCarrier string `json:"active_carrier,omitempty"`
 }
 
 // Provider, canli telemetriyi saglayan kaynaktir. Gateway, gossip/WAL/tunel/
@@ -253,11 +255,11 @@ func (s *Server) deny(w http.ResponseWriter) {
 func wanLabel(status string) string {
 	switch status {
 	case "direct":
-		return "Direct Internet"
+		return "Direct WAN"
 	case "relayed":
 		return "Relayed via Peer"
 	case "off_grid":
-		return "Off-Grid Mesh Only"
+		return "Isolated Mesh Only"
 	default:
 		return "Unknown"
 	}

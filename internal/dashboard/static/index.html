@@ -3,68 +3,94 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AETHERIS — Yönetim Paneli</title>
+  <title>AETHERIS — Control Plane</title>
   <link rel="stylesheet" href="/admin/style.css">
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
       <span class="logo">◈</span>
-      <span class="title">AETHERIS</span>
-      <span class="sub">Live Topology Observer</span>
+      <div class="brand-text">
+        <span class="title">AETHERIS</span>
+        <span class="sub">Control Plane · v0.6b</span>
+      </div>
     </div>
     <div class="conn">
-      <span id="wan-badge" class="wan wan-unknown">WAN: —</span>
-      <span id="dot" class="dot off"></span>
-      <span id="conn-text">bağlantı bekleniyor…</span>
+      <span id="conn-dot" class="dot off"></span>
+      <span id="conn-text">bağlanıyor…</span>
     </div>
   </header>
 
   <main>
+    <!-- WAN durumu hero -->
+    <section class="hero">
+      <div class="hero-left">
+        <div class="hero-label">WAN STATUS</div>
+        <div id="wan-badge" class="wan-badge wan-unknown">
+          <span class="wan-dot"></span>
+          <span id="wan-text">—</span>
+        </div>
+      </div>
+      <div class="hero-meta">
+        <div class="hm-item"><span class="hm-k">Aktif Taşıyıcı</span><span class="hm-v" id="carrier">—</span></div>
+        <div class="hm-item"><span class="hm-k">Aktif Tünel</span><span class="hm-v" id="tunnels">—</span></div>
+        <div class="hm-item"><span class="hm-k">Ort. RTT</span><span class="hm-v" id="rtt">—</span></div>
+      </div>
+    </section>
+
+    <!-- metrik kartlari -->
     <section class="cards">
+      <div class="card">
+        <div class="card-label">Bant Genişliği</div>
+        <div class="card-value" id="throughput">—</div>
+        <div class="card-unit">anlık geçiş hızı</div>
+      </div>
       <div class="card">
         <div class="card-label">WAL Kuyruk Derinliği</div>
         <div class="card-value" id="wal-depth">—</div>
-      </div>
-      <div class="card">
-        <div class="card-label">Aktif Tünel</div>
-        <div class="card-value" id="tunnels">—</div>
+        <div class="card-unit">bekleyen kayıt</div>
       </div>
       <div class="card">
         <div class="card-label">Disk Kullanımı</div>
         <div class="card-value" id="disk">—</div>
+        <div class="card-unit">kalıcı depo</div>
       </div>
       <div class="card">
-        <div class="card-label">Geçiş Hızı</div>
-        <div class="card-value" id="throughput">—</div>
+        <div class="card-label">Keşfedilen Düğüm</div>
+        <div class="card-value" id="nodecount">—</div>
+        <div class="card-unit">mesh topolojisi</div>
       </div>
     </section>
 
     <section class="grid">
       <div class="panel">
-        <h2>Gossip Mesh Topolojisi</h2>
-        <canvas id="topo" width="520" height="360"></canvas>
-        <table class="nodes">
+        <div class="panel-head">
+          <h2>Canlı Mesh Topolojisi</h2>
+          <span class="panel-tag">gossip · zero-conf</span>
+        </div>
+        <canvas id="topo" width="560" height="340"></canvas>
+        <table class="data-table">
           <thead><tr><th>Düğüm</th><th>Taşıyıcı</th><th>RTT</th><th>Durum</th></tr></thead>
           <tbody id="node-rows"></tbody>
         </table>
       </div>
 
       <div class="panel">
-        <h2>Faturalama / Kredi Hareketi</h2>
-        <table class="credits">
-          <thead><tr><th>İstemci</th><th>Kredi Birimi</th><th>Bayt</th></tr></thead>
+        <div class="panel-head">
+          <h2>Faturalama / Kredi Hareketi</h2>
+          <span class="panel-tag">zero-knowledge</span>
+        </div>
+        <table class="data-table">
+          <thead><tr><th>İstemci</th><th>Bayt</th></tr></thead>
           <tbody id="credit-rows"></tbody>
         </table>
-        <div class="meta">
-          <span>Son güncelleme: <span id="ts">—</span></span>
-        </div>
+        <div class="meta">Son güncelleme: <span id="ts">—</span></div>
       </div>
     </section>
   </main>
 
   <footer>
-    <span>Zero-Knowledge · yalnızca payload SHA-256 ve bayt sayımı ölçülür · tek binary · offline</span>
+    Zero-Knowledge · yalnızca payload SHA-256 + bayt sayımı · Zero-KVKK RF framing · tek binary · %100 off-grid (sıfır CDN)
   </footer>
 
   <script src="/admin/app.js"></script>
