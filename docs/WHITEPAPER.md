@@ -11,14 +11,15 @@
 
 ## 1. MİMARIN MANİFESTOSU
 
-> *"1998 yılında Adıyaman Teknik Lisesi Yazılım Bölümü’nde ilk kodlarımı derlediğimde, yazılım dünyası hazır kütüphanelerin ve devasa bulut katmanlarının arkasına gizlenmemişti. Bellek yönetimi, donanımla doğrudan iletişim ve ağın ham gerçeğiyle yüzleşmek zorundaydık.*
->
-> *Bugün teknoloji dünyası, ‘her an kesintisiz internet var’ illüzyonuna dayanarak inşa edilen son derece kırıkgan sistemlerle dolu. Merkezi bir bulut sunucusu çöktüğünde veya bölgesel bir erişim kesintisi yaşandığında B2B operasyonlar, saha tesisleri ve otonom sistemler felç oluyor.*
->
-> *Aetheris Protocol, bu kırılganlığa bir başkaldırıdır. ‘İnternet bir lükstür, yerel dayanıklılık ise zorunluluk’ prensibiyle tasarlanmıştır. Aetheris; internet koptuğunda dahi durmayan, veriyi yerelde mühürleyen ve ilk çıkış kapısını (gateway) bulduğu an dış dünyayla senkronize olan disiplinli bir mühendislik ürünüdür."*
->
-> — Mehmet DİNÇ, Protokol Mimarı
+*"1998 yılında Adıyaman Teknik Lisesi Yazılım Bölümü’nde ilk kodlarımızı derlediğimizde, ekranın karartısı karşısında yalnız ama tam anlamıyla özgürdük. Hazır kütüphanelerin, devasa bulut katmanlarının ve her hareketimizi kısıtlayan merkezi tekel yapıların arkasına sığınmamıştık. Bellek yönetimiyle, donanımın ham gücüyle ve ağın gerçekçi, tavizsiz çıplaklığıyla yüzleşmek zorundaydık; o günlerde yazılan her satır kod, bir keşif ve bir hayatta kalma mücadelesiydi.
 
+Bugünün dijital dünyası ise 'her an kesintisiz internet var' varsayımına dayanan, son derece kırılgan ve bağımlı sistemlerle örülü. Merkezi omurgalara ve altyapı tüccarlarının insafına bırakılmış bu düzen; bir kablo koptuğunda, bir merkezi bulut sunucusu çöktüğünde veya coğrafi sınırlar daraldığında bütünüyle felç oluyor. Sahra Çölü'ndeki bir çobanın, kriz anındaki bir saha tesisinin veya kendi kaderini tayin etmek isteyen bağımsız bir işletmenin verisi bu dayatmacı çarklar arasında kaybolup gidiyor.
+
+Aetheris Protocol; işte bu kırılganlığa, merkezi köleliğe ve tek merkezli ağ bağımlılığına karşı, Adıyaman’ın o ilk günkü kodlama ruhuyla yakılmış bir meşale, tavizsiz bir başkaldırıdır. 'İnternet bir lükstür, yerel dayanıklılık ve tam otonomi ise vazgeçilmez bir haktır' şiarıyla doğdu. Aetheris; fiber hatlar koptuğunda, omurgalar çöktüğünde veya bulutlar tamamen yıkıldığında bile durmaz. Veriyi yerelde WAL defteriyle diske kazır, radyo dalgalarıyla en zorlu coğrafyaları aşarak taşır ve ilk çıkış kapısını (gateway / exit relay) bulduğu an dış dünyayla sıfır sürtünmeyle yeniden kenetlenir.
+
+Bu sadece bir yazılım veya protokol mimarisi değil; yılların birikimiyle yazılmış, bağımsızlığın ve adanmışlığın dijital manifestosudur."*
+
+— Mehmet DİNÇ, Protokol Mimarı
 ---
 
 ## 2. PROBLEM TANIMI
