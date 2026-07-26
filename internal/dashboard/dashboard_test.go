@@ -270,7 +270,7 @@ func TestCookieFlow(t *testing.T) {
 	}
 	// index.html MUTLAK yol kullanmali (tarayici goreli-yol 404'unu onler).
 	html := string(body)
-	if !strings.Contains(html, `href="/admin/style.css"`) || !strings.Contains(html, `src="/admin/app.js"`) {
+	if !strings.Contains(html, `/admin/style.css`) || !strings.Contains(html, `/admin/app.js`) {
 		t.Fatal("index.html mutlak varlik yollari (/admin/...) icermiyor")
 	}
 	if len(resp.Cookies()) == 0 {

@@ -9,8 +9,10 @@
 package dashboard
 
 import (
+	"crypto/rand"
 	"crypto/subtle"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"io/fs"
 	"net/http"
@@ -73,6 +75,10 @@ type ProviderFunc func() Telemetry
 func (f ProviderFunc) Snapshot() Telemetry { return f() }
 
 // Config, dashboard sunucusu ayarlaridir.
+// AssetVersion, statik panel varliklarinin surumudur; cache-busting ve
+// "Slate B2B panel render ediliyor" garantisi icin ETag'e islenir.
+const AssetVersion = "v0.7a-slate"
+
 type Config struct {
 	// AdminToken, panele ve telemetri WebSocket'ine erisim icin zorunlu
 	// oturum jetonudur. BOS BIRAKILAMAZ (fail-closed): token yoksa panel
@@ -138,6 +144,7 @@ func (s *Server) tokenOK(r *http.Request) bool {
 // Tum rotalar admin jetonu korumasi altindadir.
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/admin", s.handleAdmin)
+	mux.HandleFunc("/admin/deploy", s.handleDeploy)
 	mux.HandleFunc("/admin/", s.handleStatic)
 	mux.HandleFunc("/api/v1/ws/telemetry", s.handleTelemetryWS)
 }
@@ -185,8 +192,15 @@ func (s *Server) serveFile(w http.ResponseWriter, r *http.Request, name string) 
 		return
 	}
 	w.Header().Set("Content-Type", contentType(name))
-	// Panel offline; onbelleklemeye izin ver ama dogrulama iste.
-	w.Header().Set("Cache-Control", "no-cache")
+	// v0.7a cache-busting: tarayici ESKI paneli (Live Topology Observer)
+	// onbellekten GOSTERMEMELI. Statik varliklar surekli taze cekilir; boylece
+	// Slate B2B panel her acilista render edilir.
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+	// Surum etiketli ETag: icerik degisince tarayici mutlaka yeniler.
+	w.Header().Set("ETag", `"aetheris-`+AssetVersion+`"`)
+	w.Header().Set("X-Aetheris-Panel", "slate-b2b-"+AssetVersion)
 	_, _ = w.Write(data)
 }
 
@@ -249,6 +263,53 @@ func (s *Server) pushOnce(conn *wsConn) error {
 func (s *Server) deny(w http.ResponseWriter) {
 	w.Header().Set("WWW-Authenticate", `Bearer realm="aetheris-admin"`)
 	http.Error(w, "yetkisiz: gecerli admin jetonu gerekli", http.StatusUnauthorized)
+}
+
+// handleDeploy, /admin/deploy uzerinden tek-tikla dugum konfigurasyon paketi
+// uretir. JSON yaniti: NodeID, EphemeralKey ve baslangic ortam degiskenleri.
+// Gercek binary dagitimi icin aetheris-gateway binary'si ayri dagitilmalidir.
+func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
+	if !s.tokenOK(r) {
+		s.deny(w)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST gerekli", http.StatusMethodNotAllowed)
+		return
+	}
+	// Kriptografik olarak rastgele NodeID ve RelaySecret uret.
+	idBuf := make([]byte, 16)
+	keyBuf := make([]byte, 32)
+	if _, err := rand.Read(idBuf); err != nil {
+		http.Error(w, "entropi hatasi", http.StatusInternalServerError)
+		return
+	}
+	if _, err := rand.Read(keyBuf); err != nil {
+		http.Error(w, "entropi hatasi", http.StatusInternalServerError)
+		return
+	}
+	nodeID := "edge-" + hex.EncodeToString(idBuf[:8])
+	relaySecret := hex.EncodeToString(keyBuf)
+
+	pkg := map[string]interface{}{
+		"node_id":      nodeID,
+		"relay_secret": relaySecret,
+		"version":      AssetVersion,
+		"generated_at": time.Now().UTC().Format(time.RFC3339),
+		"env": map[string]string{
+			"AETHERIS_MESH_NODE_ID":   nodeID,
+			"AETHERIS_RELAY_SECRET":   relaySecret,
+			"AETHERIS_DISCOVERY":      "true",
+			"AETHERIS_WAN_CHECK":      "true",
+			"AETHERIS_MESH":           "true",
+			"AETHERIS_MESH_ADDR":      ":7946",
+			"AETHERIS_DISCOVERY_PORT": "7947",
+		},
+		"note": "Bu paketi aetheris-gateway binary'si ile birlikte edge cihaza yukleyin.",
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+nodeID+`-config.json"`)
+	_ = json.NewEncoder(w).Encode(pkg)
 }
 
 // wanLabel, WAN durum kodunu okunabilir panel etiketine cevirir.
