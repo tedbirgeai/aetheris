@@ -567,6 +567,7 @@ func appendJSONL(path string, v any) {
 		return
 	}
 	_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	rotateIfLarge(path, 8<<20) // P1-12: 8 MB üstünde .1'e devret (sınırsız büyüme yok)
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return
@@ -659,4 +660,14 @@ func isHex(s string) bool {
 		}
 	}
 	return true
+}
+
+// rotateIfLarge (P1-12), dosya maxBytes'i aşarsa .1 yedeğine devreder (tek kuşak;
+// eski .1 üzerine yazılır). Denetim günlüklerinin sınırsız büyümesini önler.
+func rotateIfLarge(path string, maxBytes int64) {
+	fi, err := os.Stat(path)
+	if err != nil || fi.Size() < maxBytes {
+		return
+	}
+	_ = os.Rename(path, path+".1")
 }

@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -105,6 +106,11 @@ func startDTN(ctx context.Context, mux *http.ServeMux, walDir, adminToken string
 			http.Error(w, "yetkisiz", http.StatusUnauthorized)
 			return
 		}
+		// P1-11: disk backpressure — kuyruk sınırını aşınca yeni bundle reddedilir.
+		if max := dtnMax(); st.Size() >= max {
+			http.Error(w, "DTN kuyruğu dolu (backpressure)", http.StatusTooManyRequests)
+			return
+		}
 		id := "bndl-" + randHexDTN(6)
 		_ = st.Put(&dtn.Bundle{
 			ID: id, Src: "gw", Dst: "merkez", Priority: dtn.PriorityNormal,
@@ -134,6 +140,17 @@ func walDirOr(d string) string {
 		return "wal"
 	}
 	return d
+}
+
+// dtnMax (P1-11), DTN kuyruğunun izin verilen azami bundle sayısıdır.
+// AETHERIS_DTN_MAX ile ayarlanır; varsayılan 10000. Disk dolmasını önler.
+func dtnMax() int {
+	if v := os.Getenv("AETHERIS_DTN_MAX"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 10000
 }
 
 func randHexDTN(n int) string {
