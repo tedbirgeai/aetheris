@@ -1,0 +1,15 @@
+# Prometheus scrape yapılandırması — gateway'in /metrics ucunu toplar.
+# Token'ı Authorization: Bearer olarak gönderir (handler bunu kabul eder).
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: aetheris-gateway
+    metrics_path: /metrics
+    scheme: http                      # TLS açtığında: https + tls_config
+    authorization:
+      type: Bearer
+      credentials: benim-tokenim      # AETHERIS_METRICS_TOKEN (yoksa ADMIN_TOKEN)
+    static_configs:
+      - targets: ["host.docker.internal:18080"]   # Windows/Mac Docker Desktop
+        # Linux'ta gateway aynı host'ta ise: ["172.17.0.1:18080"] de olabilir

@@ -1,0 +1,29 @@
+# Prometheus + Grafana — gateway metriklerini toplar ve gösterir.
+# Kur:  docker compose -f docker-compose.observability.yml up -d
+# Grafana:   http://localhost:3000   (ilk giriş admin/admin → şifre değiştir)
+# Prometheus: http://localhost:9090
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: aetheris-prom
+    restart: unless-stopped
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "127.0.0.1:9090:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # Linux'ta gateway'e erişim
+  grafana:
+    image: grafana/grafana:latest
+    container_name: aetheris-grafana
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: DEGISTIR_grafana_parola
+    volumes:
+      - aetheris_grafana:/var/lib/grafana
+    depends_on:
+      - prometheus
+volumes:
+  aetheris_grafana:
