@@ -434,6 +434,7 @@ func run(logger *slog.Logger) error {
 	startSOCKS5(bgCtx, os.Getenv("AETHERIS_SOCKS_ADDR"), logger)
 	startDTN(bgCtx, mux, cfg.WALDir, cfg.AdminToken, logger)
 	registerEnrichment(mux, dtnStore, cfg.AdminToken)
+	registerQoS(mux, prober, cfg.AdminToken)
 
 	dashboard.AttachObservability(mux, nil)
 	mux.Handle("/healthz", middleware.Chain(http.HandlerFunc(h.Health),
