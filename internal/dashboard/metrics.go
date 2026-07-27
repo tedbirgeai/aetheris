@@ -25,7 +25,9 @@ var metricsProvider MetricsProvider
 func SetMetricsProvider(p MetricsProvider) { metricsProvider = p }
 
 func (s *Server) registerMetrics(mux *http.ServeMux) {
-	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+	// /admin/metrics — dashboard mux'ın gördüğü yol (kök /metrics ana gateway
+	// mux'ına gider ve dashboard'a ulaşmaz; /admin/* prefix'i forward edilir).
+	mux.HandleFunc("/admin/metrics", func(w http.ResponseWriter, r *http.Request) {
 		// Ayri metrik jetonu (yoksa admin jetonu). Prometheus scrape icin.
 		tok := os.Getenv("AETHERIS_METRICS_TOKEN")
 		if tok == "" {

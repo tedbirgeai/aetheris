@@ -31,11 +31,9 @@ var (
 // registerHardening, health/ready problarini kaydeder.
 func (s *Server) registerHardening(mux *http.ServeMux) {
 	readyFlag.Store(true)
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
-	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+	// /admin/* altına — kök /healthz zaten ana gateway mux'ında var (çakışma
+	// olmaz; dashboard mux yalnızca /admin/*, /api/*, /tenant, /billing görür).
+	mux.HandleFunc("/admin/readyz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if !readyFlag.Load() {
 			w.WriteHeader(http.StatusServiceUnavailable)
