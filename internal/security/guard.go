@@ -59,6 +59,9 @@ func IdentityFromSeed(seed []byte) (*Identity, error) {
 // NodeID, dugumun ag-genelinde benzersiz kimligidir (public key hex).
 func (id *Identity) NodeID() string { return hex.EncodeToString(id.pub) }
 
+// Seed, Ed25519 private key'in seed baytlarını döndürür (kalıcı depolama için).
+func (id *Identity) Seed() []byte { return id.priv.Seed() }
+
 // PublicKey, dogrulama icin acik anahtari dondurur.
 func (id *Identity) PublicKey() ed25519.PublicKey { return id.pub }
 

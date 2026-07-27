@@ -26,6 +26,7 @@ const (
 	KindEthernet     Kind = "ethernet"
 	KindWiFiWAN      Kind = "wifi_wan"
 	KindUSBTethering Kind = "usb_tethering"
+	KindHaLow        Kind = "wifi_halow_802_11ah"
 	KindSoftAPMesh   Kind = "softap_mesh"
 	KindLoRaUSB      Kind = "lora_usb_serial"
 	KindBLEMesh      Kind = "ble_mesh"

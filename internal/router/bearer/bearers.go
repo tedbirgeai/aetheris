@@ -66,12 +66,10 @@ func (b *HardwareStubBearer) Probe(_ context.Context) (float64, error) {
 // surucu ile degistir.
 func DefaultBearers(wanTargets []string) []Bearer {
 	return []Bearer{
-		// 1. Ethernet/WiFi WAN — gercek TCP probe ile test edilir.
 		NewTCPBearer(KindEthernet, wanTargets),
-		// 2. WiFi WAN (ayni probe, farkli etiket — ileride ayirt edilir).
 		NewTCPBearer(KindWiFiWAN, wanTargets),
-		// 3-6. Donanim stublari — gercek surucu gelene kadar atlanir.
 		NewHardwareStub(KindUSBTethering, "USB tethering: platform-spesifik ag API gerekli"),
+		NewHardwareStub(KindHaLow, "Wi-Fi HaLow 802.11ah: Morse Micro/Newracom chip surucu gerekli"),
 		NewHardwareStub(KindSoftAPMesh, "SoftAP: Wi-Fi chip surucu + OS ag API gerekli"),
 		NewHardwareStub(KindLoRaUSB, "LoRa USB: SX1262 dongle + seri surucu gerekli"),
 		NewHardwareStub(KindBLEMesh, "BLE Mesh: Bluetooth chip surucu gerekli"),
