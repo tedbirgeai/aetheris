@@ -1,4 +1,4 @@
-# AETHERIS PROTOCOL
+# TEDBİRGE PROTOKOL
 
 **Off-Grid ve Kesintili Ağlar İçin Gecikmeye Dayanıklı (DTN) Hibrit Mesh Mimarisi ve Yerel Defter Standardı**
 
@@ -15,16 +15,17 @@
 
 Bugünün dijital dünyası ise 'her an kesintisiz internet var' varsayımına dayanan, son derece kırılgan ve bağımlı sistemlerle örülü. Merkezi omurgalara ve altyapı tüccarlarının insafına bırakılmış bu düzen; bir kablo koptuğunda, bir merkezi bulut sunucusu çöktüğünde veya coğrafi sınırlar daraldığında bütünüyle felç oluyor. Sahra Çölü'ndeki bir çobanın, kriz anındaki bir saha tesisinin veya kendi kaderini tayin etmek isteyen bağımsız bir işletmenin verisi bu dayatmacı çarklar arasında kaybolup gidiyor.
 
-Aetheris Protocol; işte bu kırılganlığa, merkezi köleliğe ve tek merkezli ağ bağımlılığına karşı, Adıyaman’ın o ilk günkü kodlama ruhuyla yakılmış bir meşale, tavizsiz bir başkaldırıdır. 'İnternet bir lükstür, yerel dayanıklılık ve tam otonomi ise vazgeçilmez bir haktır' şiarıyla doğdu. Aetheris; fiber hatlar koptuğunda, omurgalar çöktüğünde veya bulutlar tamamen yıkıldığında bile durmaz. Veriyi yerelde WAL defteriyle diske kazır, radyo dalgalarıyla en zorlu coğrafyaları aşarak taşır ve ilk çıkış kapısını (gateway / exit relay) bulduğu an dış dünyayla sıfır sürtünmeyle yeniden kenetlenir.
+Tedbirge Protokolü; işte bu kırılganlığa, merkezi köleliğe ve tek merkezli ağ bağımlılığına karşı, Adıyaman’ın o ilk günkü kodlama ruhuyla yakılmış bir meşale, tavizsiz bir başkaldırıdır. 'İnternet bir lükstür, yerel dayanıklılık ve tam otonomi ise vazgeçilmez bir haktır' şiarıyla doğdu. Tedbirge; fiber hatlar koptuğunda, omurgalar çöktüğünde veya bulutlar tamamen yıkıldığında bile durmaz. Veriyi yerelde WAL defteriyle diske kazır, radyo dalgalarıyla en zorlu coğrafyaları aşarak taşır ve ilk çıkış kapısını (gateway / exit relay) bulduğu an dış dünyayla sıfır sürtünmeyle yeniden kenetlenir.
 
 Bu sadece bir yazılım veya protokol mimarisi değil; yılların birikimiyle yazılmış, bağımsızlığın ve adanmışlığın dijital manifestosudur."*
 
 — Mehmet DİNÇ, Protokol Mimarı
+
 ---
 
 ## 2. PROBLEM TANIMI
 
-Geleneksel B2B ve endüstriyal ağ mimarileri 3 ana zafiyet barındırır:
+Geleneksel B2B ve endüstriyel ağ mimarileri 3 ana zafiyet barındırır:
 
 1. **Merkezi Bulut Bağımlılığı (Single Point of Failure):** İnternet bağlantısı kesildiğinde yerel cihazlar birbiriyle konuşsa dahi işlem yapamaz hale gelir.
 2. **Yüksek Gecikme ve Veri Kaybı (RTT & Packet Loss):** Zayıf kapsama alanlarında veya kesintili hatlarda klasik TCP/IP el sıkışmaları başarısız olur.
@@ -32,12 +33,12 @@ Geleneksel B2B ve endüstriyal ağ mimarileri 3 ana zafiyet barındırır:
 
 ---
 
-## 3. AETHERIS MİMARİSİ VE ÇEKİRDEK BİLEŞENLER
+## 3. TEDBİRGE GATEWAY MİMARİSİ VE ÇEKİRDEK BİLEŞENLER
 
-Aetheris Protocol, bu sorunları **3 Katmanlı Otonom Mimari** ile çözer:
+Tedbirge Protokolü, bu sorunları **3 Katmanlı Otonom Mimari** ile çözer:
 
 ### Katman 1: Yerel Mesh, Gossip Keşfi ve Exit Relay Köprülemesi
-* **Gossip Protokolü ve Zero-Conf:** Cihazlar merkezi bir DNS veya DHCP sunucusuna ihtiyaç duymadan, yerel ağ (LAN/Wi-Fi) veya LoRa radyo frekansları üzerinden birbirini otomatik olarak keşfeder.
+* **Gossip Protokolü ve Zero-Conf:** Cihazlar merkezi bir DNS veya DHCP sunucusuna ihtiyaç duymadan, yerel ağ (LAN/Wi-Fi) veya LoRa/Wi-Fi HaLow radyo frekansları üzerinden birbirini otomatik olarak keşfeder.
 * **Exit Relay (Çıkış Düğümü):** Bölgesel internet kesintilerinde, ağ üzerindeki herhangi bir düğümün aktif internet bağlantısı (uydu, 4G veya yedek hat) varsa, diğer düğümler tüm dış dünya trafiğini bu düğüm üzerinden güvenli tünellerle (`Exit Relay`) dış dünyaya aktarır.
 
 ### Katman 2: WAL (Write-Ahead Log) ve DTN (Store-and-Forward) Motoru
@@ -45,10 +46,10 @@ Aetheris Protocol, bu sorunları **3 Katmanlı Otonom Mimari** ile çözer:
 * **Gecikmeye Dayanıklı Ağ (DTN):** Veriler `PENDING` statüsünde DTN demetleri (`Bundles`) halinde kuyruklanır. İnternet hattı veya uygun bir taşıyıcı (kurye node / uydu) bulunur bulunmaz, kuyruk sıfır veri kaybıyla karşı tarafa fırlatılır (`Seamless Handoff`).
 
 ### Katman 3: Çift Arayüz Katmanı ve Ticari Entegrasyonlar (v1.0.0-enterprise)
-* **Slate Admin Control Plane (`/admin`):** WebSocket tabanlı canlı telemetri akışı; aktif mesh düğümleri, RTT gecikmeleri, WAL kuyruk derinliği, disk kullanımı ve SOCKS5 tünel durumlarının anlık görselleştirilmesi. Otonom düğüm konfigürasyon paketi (`POST /admin/deploy`) ile tek hamlede node üretimi.
-* **B2B Kiracı (Tenant) Paneli (`/kiracı`):** Çok kiracılı (multi-tenant) mimari ile her API anahtarı için anlık bant genişliği takibi, WAL geçmişi ve kota izolasyonu.
-* **Stripe & e-Fatura / e-Arşiv Modülü (`pkg/billing`):** Türkiye yasal mevzuatına uygun (VKN/TCKN, %20 KDV, matrah hesaplama) e-Fatura taslak üreticisi ve Stripe webhook / Checkout entegrasyonu.
-* **Ed25519 Voucher Kontör Sistemi (`pkg/voucher`):** Çöllerde veya tamamen off-grid ortamlarda internet olmasa bile şifreli, imzalı kontör kodlarıyla (`AETH-XXXX-...`) çevrimdışı ödeme ve lisans doğrulaması; işlemlerin Zero-Knowledge prensibiyle WAL ledger'a işlenmesi.
+* **Tedbirge Off-Grid Control Plane (`/admin`):** WebSocket tabanlı canlı telemetri akışı; aktif mesh düğümleri, RTT gecikmeleri, WAL kuyruk derinliği, disk kullanımı ve SOCKS5 tünel durumlarının anlık görselleştirilmesi. Otonom düğüm konfigürasyon paketi (`POST /admin/deploy`) ile tek hamlede node üretimi.
+* **Tedbirge Loop Kiracı (Tenant) Paneli (`/kiracı`):** Çok kiracılı (multi-tenant) mimari ile her API anahtarı için anlık bant genişliği takibi, WAL geçmişi ve kota izolasyonu.
+* **Tedbirge Pay & e-Fatura / e-Arşiv Modülü (`/billing` / `pkg/billing`):** Türkiye yasal mevzuatına uygun (VKN/TCKN, %20 KDV, matrah hesaplama) e-Fatura taslak üreticisi ve Stripe webhook / Checkout entegrasyonu.
+* **Ed25519 Voucher Kontör Sistemi (`pkg/voucher`):** Çöllerde veya tamamen off-grid ortamlarda internet olmasa bile şifreli, imzalı kontör kodlarıyla (`TEDB-XXXX-...`) çevrimdışı ödeme ve lisans doğrulaması; işlemlerin Zero-Knowledge prensibiyle WAL ledger'a işlenmesi.
 
 ---
 
@@ -61,4 +62,4 @@ Aetheris Protocol, bu sorunları **3 Katmanlı Otonom Mimari** ile çözer:
 
 ## 5. SONUÇ
 
-Aetheris Protocol; geleneksel telekomünikasyon altyapılarına ve merkezi bulut sağlayıcılarına bağımlılığı ortadan kaldıran, internet kesintilerinde dahi WAL ve DTN motorlarıyla kesintisiz çalışan, ticarileşmeye ve enterprise ölçeğe hazır yeni nesil otonom ağ standardıdır.
+Tedbirge Protokolü; geleneksel telekomünikasyon altyapılarına ve merkezi bulut sağlayıcılarına bağımlılığı ortadan kaldıran, internet kesintilerinde dahi WAL ve DTN motorlarıyla kesintisiz çalışan, ticarileşmeye ve enterprise ölçeğe hazır yeni nesil otonom ağ standardıdır.
