@@ -432,6 +432,7 @@ func run(logger *slog.Logger) error {
 
 	startBearers(bgCtx, cfg.WANTargets, logger)
 	startSOCKS5(bgCtx, os.Getenv("AETHERIS_SOCKS_ADDR"), logger)
+	startDTN(bgCtx, mux, cfg.WALDir, cfg.AdminToken, logger)
 
 	mux.Handle("/healthz", middleware.Chain(http.HandlerFunc(h.Health),
 		middleware.Recover(logger)))
@@ -612,6 +613,7 @@ type teleSources struct {
 func buildTelemetry(cfg *config.Config, wal *store.WALStore, m *meter.Meter, mesh *gossip.Node, wanDet *wan.Detector, src teleSources) dashboard.Telemetry {
 	t := dashboard.Telemetry{TS: time.Now().Unix()}
 	t.SOCKS5 = socks5Telemetry()
+	t.DTN = dtnTelemetry()
 	if b := socksThroughput(); b > 0 {
 		t.ThroughputBps = b
 	}
