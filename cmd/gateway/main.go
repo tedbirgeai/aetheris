@@ -430,6 +430,8 @@ func run(logger *slog.Logger) error {
 			"ws", "/api/v1/ws/telemetry")
 	}
 
+	startBearers(bgCtx, cfg.WANTargets, logger)
+
 	mux.Handle("/healthz", middleware.Chain(http.HandlerFunc(h.Health),
 		middleware.Recover(logger)))
 
@@ -631,7 +633,9 @@ func buildTelemetry(cfg *config.Config, wal *store.WALStore, m *meter.Meter, mes
 	}
 
 	// Aktif tasiyici turu (Ethernet/Wi-Fi/LoRa) ve aktif tunel sayisi.
-	t.ActiveCarrier = "ip"
+	t.ActiveCarrier = activeCarrier("ip")
+	t.Nodes = append(carrierNodes(), t.Nodes...)
+	_ = "ip"
 	if src.loraActive {
 		t.ActiveCarrier = "ip+lora"
 	}
