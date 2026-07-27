@@ -307,10 +307,12 @@ func (s *Server) handleVoucherIssue(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	raw, _ := v.Marshal()
 	writeJSON(w, map[string]any{
 		"serial": v.SerialNo, "issuer": v.IssuerID, "bearer": v.BearerID,
 		"credits": v.Credits, "sig": hex.EncodeToString(v.Sig),
 		"payload_sha": v.PayloadSHA256(), "expires_at": v.ExpiresAt,
+		"raw": string(raw),
 	})
 }
 
