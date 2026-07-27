@@ -12,11 +12,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	cryptorand "crypto/rand"
 	"encoding/hex"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 	"time"
@@ -31,13 +33,56 @@ var (
 	dtnDelivered atomic.Uint64
 )
 
-// dtnCarrier, dtn.Carrier arayuzunu karsilar: WAN/tasiyici mevcut oldugunda
-// bundle merkeze aktarilmis sayilir. Gercek LoRa/BLE/arac-DTN tasiyicisi bu
-// arayuzu genisletir; burada internet varken teslim edilmis kabul edilir.
-type dtnCarrier struct{}
+// dtnCarrier, GERCEK bir store-carry-forward tasiyicisidir: bundle payload'ini
+// yapilandirilmis merkez ucuna (AETHERIS_DTN_UPSTREAM) HTTP POST ile aktarir.
+// Upstream tanimsizsa Available()=false → bundle'lar PENDING kalir (dogru off-grid
+// davranisi; sahte teslim YOK). Gercek LoRa/BLE/arac-DTN tasiyicisi ayni
+// arayuzu (dtn.Carrier) genisletir.
+type dtnCarrier struct {
+	upstream string
+	client   *http.Client
+}
 
-func (dtnCarrier) Available() bool                                { return true }
-func (dtnCarrier) Send(_ context.Context, _ *dtn.Bundle) error { return nil }
+func (c dtnCarrier) Available() bool {
+	if c.upstream == "" {
+		return false
+	}
+	req, err := http.NewRequest(http.MethodHead, c.upstream, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return false
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode < 500
+}
+
+func (c dtnCarrier) Send(ctx context.Context, b *dtn.Bundle) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.upstream, bytes.NewReader(b.Payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("X-DTN-Bundle", b.ID)
+	req.Header.Set("X-DTN-Dst", b.Dst)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return errDTNUpstream
+	}
+	return nil
+}
+
+var errDTNUpstream = &dtnErr{"dtn: upstream 2xx dönmedi"}
+
+type dtnErr struct{ s string }
+
+func (e *dtnErr) Error() string { return e.s }
 
 // startDTN, DTN deposunu + forwarder'i baslatir ve test ucunu kaydeder.
 func startDTN(ctx context.Context, mux *http.ServeMux, walDir, adminToken string, logger *slog.Logger) {
@@ -49,7 +94,8 @@ func startDTN(ctx context.Context, mux *http.ServeMux, walDir, adminToken string
 	}
 	dtnStore = st
 	dtnDir = dir
-	fwd := dtn.NewForwarder(st, []dtn.Carrier{dtnCarrier{}}, logger)
+	carrier := dtnCarrier{upstream: os.Getenv("AETHERIS_DTN_UPSTREAM"), client: &http.Client{Timeout: 8 * time.Second}}
+	fwd := dtn.NewForwarder(st, []dtn.Carrier{carrier}, logger)
 	fwd.RetryAfter = 2 * time.Second
 	fwd.OnDelivered = func(_ *dtn.Bundle) { dtnDelivered.Add(1) }
 	go fwd.Run(ctx, 2*time.Second)

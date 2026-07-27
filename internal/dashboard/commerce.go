@@ -34,6 +34,7 @@ package dashboard
 
 import (
 	cryptorand "crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"net"
@@ -83,13 +84,18 @@ func commerceInit() {
 			}
 		}
 		if commerce.issuer == nil {
-			commerce.issuer, _ = voucher.NewIssuer()
+			// P0: env seed yoksa diskten kalıcı seed türet/oluştur — restart'ta
+			// operatör kimliği korunur (aksi halde eski voucher'lar doğrulanamaz).
+			commerce.issuer = loadOrCreateIssuer(filepath.Join("wal", "voucher_seed.hex"))
 		}
 		// Voucher WAL ledger: redemption'ları JSONL olarak diske ekler (kalıcı).
 		commerce.ledgerPath = envOr("AETHERIS_VOUCHER_LEDGER", filepath.Join("wal", "vouchers.jsonl"))
 		commerce.ledger = voucher.NewLedger(func(e voucher.LedgerEntry) {
 			appendJSONL(commerce.ledgerPath, e)
 		})
+		// P0: double-spend restart koruması — diskteki ledger'dan harcanmış
+		// serial SHA'larını geri yükle (in-memory ledger.seen restart'ta boşalır).
+		loadSpentSerials(commerce.ledgerPath)
 		commerce.stripeSecret = os.Getenv("AETHERIS_STRIPE_SECRET")
 		commerce.stripeHook = os.Getenv("AETHERIS_STRIPE_WEBHOOK_SECRET")
 		commerce.priceIDs = map[string]string{
@@ -114,7 +120,6 @@ func (s *Server) RegisterCommerceRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/admin/manifest.webmanifest", s.handleManifest)
 	mux.HandleFunc("/admin/sw.js", s.handleSW)
 	mux.HandleFunc("/kvkk", s.handleKVKK)
-	s.registerQNBRoutes(mux)
 }
 
 // ============================================================
@@ -195,6 +200,11 @@ func (s *Server) validTenantKey(key string) bool {
 	want, exists := commerce.apiKeys[id]
 	if !exists {
 		return false
+	}
+	// P0: API anahtarı düz metin YERİNE hash olarak saklanabilir. Kayıtlı değer
+	// 64-hex ise sha256(secret) ile sabit-zamanda karşılaştırılır (sızıntı direnci).
+	if len(want) == 64 && isHex(want) {
+		return constTimeEq(sha256Hex(secret), want)
 	}
 	return constTimeEq(secret, want)
 }
@@ -327,6 +337,13 @@ func (s *Server) handleVoucherRedeem(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "voucher ayrıştırılamadı", http.StatusBadRequest)
 		return
 	}
+	// P0 double-spend: kalıcı "harcanmış serial" kümesini restart'a dayanıklı
+	// şekilde önce kontrol et (in-memory ledger.seen restart'ta boşalır).
+	serialSHA := sha256Hex(v.SerialNo)
+	if serialSpent(serialSHA) {
+		writeJSON(w, map[string]any{"error": true, "message": voucher.ErrAlreadyRedeemed.Error()})
+		return
+	}
 	// Zero-Knowledge: imza doğrulanır, double-spend engellenir, yalnızca
 	// SHA-256 + bayt WAL'a yazılır (onWrite → vouchers.jsonl).
 	commerce.mu.Lock()
@@ -337,6 +354,7 @@ func (s *Server) handleVoucherRedeem(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"error": true, "message": err.Error()})
 		return
 	}
+	markSpent(serialSHA)
 	writeJSON(w, map[string]any{
 		"error": false, "message": "İmza doğrulandı, kredi WAL ledger'a işlendi.",
 		"payload_sha": v.PayloadSHA256(), "balance": bal,
@@ -556,4 +574,89 @@ func appendJSONL(path string, v any) {
 	defer f.Close()
 	b, _ := json.Marshal(v)
 	_, _ = f.Write(append(b, '\n'))
+}
+
+// ============================================================
+//  P0 yardımcıları — double-spend kalıcılığı, kalıcı seed, API key hash
+// ============================================================
+
+var voucherSpent = struct {
+	mu  sync.Mutex
+	set map[string]struct{}
+}{set: make(map[string]struct{})}
+
+func serialSpent(sha string) bool {
+	voucherSpent.mu.Lock()
+	defer voucherSpent.mu.Unlock()
+	_, ok := voucherSpent.set[sha]
+	return ok
+}
+
+func markSpent(sha string) {
+	voucherSpent.mu.Lock()
+	voucherSpent.set[sha] = struct{}{}
+	voucherSpent.mu.Unlock()
+}
+
+// loadSpentSerials, diskteki voucher ledger'ından (JSONL) harcanmış serial
+// SHA'larını belleğe yükler — restart sonrası double-spend'i engeller (P0).
+func loadSpentSerials(path string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	voucherSpent.mu.Lock()
+	defer voucherSpent.mu.Unlock()
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var e voucher.LedgerEntry
+		if json.Unmarshal([]byte(line), &e) != nil {
+			continue
+		}
+		if e.SerialSHA != "" {
+			voucherSpent.set[e.SerialSHA] = struct{}{}
+		}
+	}
+}
+
+// loadOrCreateIssuer, kalıcı Ed25519 issuer kimliği sağlar (P0): seed dosyası
+// varsa ondan türetir, yoksa güvenli üretip diske yazar (0600). Böylece
+// restart'ta operatör kimliği ve eski voucher doğrulaması korunur.
+func loadOrCreateIssuer(seedPath string) *voucher.Issuer {
+	if raw, err := os.ReadFile(seedPath); err == nil {
+		if seed, derr := hex.DecodeString(strings.TrimSpace(string(raw))); derr == nil {
+			if iss, ierr := voucher.IssuerFromSeed(seed); ierr == nil {
+				return iss
+			}
+		}
+	}
+	seed := make([]byte, 32)
+	if _, err := cryptorand.Read(seed); err != nil {
+		iss, _ := voucher.NewIssuer()
+		return iss
+	}
+	_ = os.MkdirAll(filepath.Dir(seedPath), 0o755)
+	_ = os.WriteFile(seedPath, []byte(hex.EncodeToString(seed)), 0o600)
+	if iss, err := voucher.IssuerFromSeed(seed); err == nil {
+		return iss
+	}
+	iss, _ := voucher.NewIssuer()
+	return iss
+}
+
+func sha256Hex(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
+}
+
+func isHex(s string) bool {
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
 }

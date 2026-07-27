@@ -1,0 +1,21 @@
+# Postgres — kalıcı defter (P0-1). Başlat:  docker compose -f docker-compose.postgres.yml up -d
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: aetheris-pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: aetheris
+      POSTGRES_PASSWORD: DEGISTIR_parola   # .env'deki DSN ile AYNI olmalı
+      POSTGRES_DB: aetheris
+    ports:
+      - "127.0.0.1:5432:5432"   # yalnızca localhost — dışarıya açma
+    volumes:
+      - aetheris_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aetheris -d aetheris"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+volumes:
+  aetheris_pg:
