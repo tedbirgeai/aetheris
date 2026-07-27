@@ -20,10 +20,13 @@ package dashboard
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"html"
 	"net/http"
+	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/tedbirgeai/aetheris/pkg/billing"
@@ -34,6 +37,120 @@ func (s *Server) registerQNBRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/billing/qnb/start", s.rlWrap(s.handleQNBStart))
 	mux.HandleFunc("/billing/qnb/ok", s.rlWrap(s.handleQNBOk))
 	mux.HandleFunc("/billing/qnb/fail", s.rlWrap(s.handleQNBFail))
+	mux.HandleFunc("/admin/invoice/send", s.rlWrap(s.handleInvoiceSend))
+	mux.HandleFunc("/admin/invoice/record", s.rlWrap(s.handleInvoiceRecord))
+	mux.HandleFunc("/admin/invoice/list", s.rlWrap(s.handleInvoiceList))
+}
+
+// invoiceDraft, panelin ürettiği e-Fatura taslağının sunucu tarafı karşılığı.
+type invoiceDraft struct {
+	FaturaNo  string  `json:"fatura_no"`
+	ETTN      string  `json:"ettn"`
+	BelgeTipi string  `json:"belge_tipi"`
+	BuyerName string  `json:"buyer_name"`
+	VKN       string  `json:"vkn"`
+	TCKN      string  `json:"tckn"`
+	Email     string  `json:"email"`
+	Matrah    float64 `json:"matrah"`
+	Indirim   float64 `json:"kredi_indirimi"`
+	Vergiye   float64 `json:"vergiye_tabi"`
+	KDVOrani  int     `json:"kdv_orani"`
+	KDVTutari float64 `json:"kdv_tutari"`
+	Odenecek  float64 `json:"odenecek"`
+	Status    string  `json:"status"`
+}
+
+// handleInvoiceRecord, kesilen fatura taslağını billing.jsonl'e kalıcı yazar.
+func (s *Server) handleInvoiceRecord(w http.ResponseWriter, r *http.Request) {
+	if !s.tokenOK(r) {
+		s.deny(w)
+		return
+	}
+	var d invoiceDraft
+	if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
+		http.Error(w, "gövde ayrıştırılamadı", http.StatusBadRequest)
+		return
+	}
+	if d.Status == "" {
+		d.Status = "taslak"
+	}
+	appendJSONL(commerce.billingLog, map[string]any{
+		"ts": time.Now().Unix(), "event": "invoice", "fatura_no": d.FaturaNo, "ettn": d.ETTN,
+		"buyer_name": d.BuyerName, "vkn": d.VKN, "tckn": d.TCKN, "odenecek": d.Odenecek, "status": d.Status,
+	})
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+// handleInvoiceList, billing.jsonl'deki fatura kayıtlarını (en yeni önce) döndürür.
+func (s *Server) handleInvoiceList(w http.ResponseWriter, r *http.Request) {
+	if !s.tokenOK(r) {
+		s.deny(w)
+		return
+	}
+	data, err := os.ReadFile(commerce.billingLog)
+	if err != nil {
+		writeJSON(w, []any{})
+		return
+	}
+	out := make([]map[string]any, 0, 32)
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var m map[string]any
+		if json.Unmarshal([]byte(line), &m) != nil {
+			continue
+		}
+		if ev, _ := m["event"].(string); ev == "invoice" || ev == "einvoice_sent" {
+			if _, ok := m["fatura_no"]; ok {
+				out = append(out, m)
+			}
+		}
+	}
+	// en yeni önce
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	writeJSON(w, out)
+}
+
+// handleInvoiceSend, e-Fatura taslağını QNB eFinans'a gönderir (manuel gönderim).
+func (s *Server) handleInvoiceSend(w http.ResponseWriter, r *http.Request) {
+	if !s.tokenOK(r) {
+		s.deny(w)
+		return
+	}
+	var d invoiceDraft
+	if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
+		http.Error(w, "gövde ayrıştırılamadı", http.StatusBadRequest)
+		return
+	}
+	ef := billing.EFinansFromEnv()
+	if !ef.Ready() {
+		writeJSON(w, map[string]any{"error": true, "message": "QNB eFinans yapılandırılmamış (AETHERIS_EFINANS_*)"})
+		return
+	}
+	inv := &billing.Invoice{
+		UUID: d.ETTN, IssueDate: time.Now(),
+		IssueDateStr: time.Now().Format("2006-01-02"), IssueTimeStr: time.Now().Format("15:04:05"),
+		BuyerName: d.BuyerName, VKN: d.VKN, TCKN: d.TCKN, Email: d.Email,
+		GrossAmount: d.Matrah, KDVRate: float64(d.KDVOrani) / 100, KDVAmount: d.KDVTutari,
+		NetAmount: d.Odenecek, CreditDiscount: d.Indirim, Currency: "TRY",
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	res, err := ef.SendEArsiv(ctx, inv)
+	if err != nil {
+		appendJSONL(commerce.billingLog, map[string]any{"ts": time.Now().Unix(), "event": "einvoice_error", "fatura_no": d.FaturaNo, "error": err.Error()})
+		writeJSON(w, map[string]any{"error": true, "message": err.Error()})
+		return
+	}
+	appendJSONL(commerce.billingLog, map[string]any{
+		"ts": time.Now().Unix(), "event": "einvoice_sent", "fatura_no": d.FaturaNo,
+		"buyer_name": d.BuyerName, "odenecek": d.Odenecek, "ettn": res.ETTN, "status": "gönderildi",
+	})
+	writeJSON(w, map[string]any{"error": false, "ettn": res.ETTN, "status": res.Status})
 }
 
 // planKurus, panel planını kuruş (₺*100) tutarına çevirir.
