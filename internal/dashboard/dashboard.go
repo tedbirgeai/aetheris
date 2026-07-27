@@ -18,6 +18,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/tedbirgeai/aetheris/pkg/voucher"
 )
 
 //go:embed static/*
@@ -86,8 +88,8 @@ func (f ProviderFunc) Snapshot() Telemetry { return f() }
 
 // Config, dashboard sunucusu ayarlaridir.
 // AssetVersion, statik panel varliklarinin surumudur; cache-busting ve
-// "Slate B2B panel render ediliyor" garantisi icin ETag'e islenir.
-const AssetVersion = "v0.7a-slate"
+// panel render garantisi icin ETag'e islenir.
+const AssetVersion = "v1.0.0-enterprise"
 
 type Config struct {
 	// AdminToken, panele ve telemetri WebSocket'ine erisim icin zorunlu
@@ -98,6 +100,21 @@ type Config struct {
 	Provider Provider
 	// Interval, telemetri yayin araligi (varsayilan 1sn).
 	Interval time.Duration
+
+	// --- Ticarilestirme (commerce.go tarafindan kullanilir) ---
+	// APIKeys, gecerli kiraci anahtarlari: clientID -> secret. validTenantKey
+	// bu listeye karsi sabit-zamanda dogrulama yapar (madde 1).
+	APIKeys map[string]string
+	// Issuer, off-grid Ed25519 voucher imzalayicisi (madde 6). nil ise
+	// voucher uclari 503 doner.
+	Issuer *voucher.Issuer
+	// Ledger, voucher redemption defteri (double-spend + WAL). nil ise
+	// redeem ucu 503 doner.
+	Ledger *voucher.Ledger
+	// StripeWebhookSecret, gelen Stripe webhook'unun HMAC dogrulama sirri.
+	StripeWebhookSecret string
+	// StripePriceIDs, panel plan adini Stripe price_... kimligine esler.
+	StripePriceIDs map[string]string
 }
 
 // Server, gomulu paneli ve telemetri WebSocket'ini sunar.
@@ -151,7 +168,8 @@ func (s *Server) tokenOK(r *http.Request) bool {
 //	GET /admin/*                   -> gomulu statik varliklar (style.css, app.js)
 //	GET /api/v1/ws/telemetry       -> canli telemetri WebSocket'i
 //
-// Tum rotalar admin jetonu korumasi altindadir.
+// Tum rotalar admin jetonu korumasi altindadir. Ticarilestirme uclari
+// commerce.go'daki RegisterCommerceRoutes ile eklenir.
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/admin", s.handleAdmin)
 	mux.HandleFunc("/admin/deploy", s.handleDeploy)
@@ -161,6 +179,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/tenant", s.handleTenant)
 	mux.HandleFunc("/tenant/", s.handleTenantStatic)
 	mux.HandleFunc("/api/v1/ws/tenant", s.handleTenantWS)
+	// Ticarilestirme + PWA + KvKK (commerce.go).
+	s.RegisterCommerceRoutes(mux)
 }
 
 func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
@@ -206,15 +226,12 @@ func (s *Server) serveFile(w http.ResponseWriter, r *http.Request, name string) 
 		return
 	}
 	w.Header().Set("Content-Type", contentType(name))
-	// v0.7a cache-busting: tarayici ESKI paneli (Live Topology Observer)
-	// onbellekten GOSTERMEMELI. Statik varliklar surekli taze cekilir; boylece
-	// Slate B2B panel her acilista render edilir.
+	// Cache-busting: tarayici ESKI paneli onbellekten gostermemeli.
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
-	// Surum etiketli ETag: icerik degisince tarayici mutlaka yeniler.
 	w.Header().Set("ETag", `"aetheris-`+AssetVersion+`"`)
-	w.Header().Set("X-Aetheris-Panel", "slate-b2b-"+AssetVersion)
+	w.Header().Set("X-Aetheris-Panel", "tedbirge-"+AssetVersion)
 	_, _ = w.Write(data)
 }
 
@@ -280,8 +297,7 @@ func (s *Server) deny(w http.ResponseWriter) {
 }
 
 // handleDeploy, /admin/deploy uzerinden tek-tikla dugum konfigurasyon paketi
-// uretir. JSON yaniti: NodeID, EphemeralKey ve baslangic ortam degiskenleri.
-// Gercek binary dagitimi icin aetheris-gateway binary'si ayri dagitilmalidir.
+// uretir. JSON yaniti: NodeID, RelaySecret ve baslangic ortam degiskenleri.
 func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	if !s.tokenOK(r) {
 		s.deny(w)
@@ -291,7 +307,6 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "POST gerekli", http.StatusMethodNotAllowed)
 		return
 	}
-	// Kriptografik olarak rastgele NodeID ve RelaySecret uret.
 	idBuf := make([]byte, 16)
 	keyBuf := make([]byte, 32)
 	if _, err := rand.Read(idBuf); err != nil {
@@ -326,17 +341,17 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(pkg)
 }
 
-// wanLabel, WAN durum kodunu okunabilir panel etiketine cevirir.
+// wanLabel, WAN durum kodunu okunabilir panel etiketine cevirir (Turkce).
 func wanLabel(status string) string {
 	switch status {
 	case "direct":
-		return "Direct WAN"
+		return "Direkt WAN"
 	case "relayed":
-		return "Relayed via Peer"
+		return "Röle ile (Peer)"
 	case "off_grid":
-		return "Isolated Mesh Only"
+		return "İzole Mesh"
 	default:
-		return "Unknown"
+		return "Bilinmiyor"
 	}
 }
 
@@ -344,7 +359,6 @@ func wanLabel(status string) string {
 
 // handleTenant, tenant panelini sunar (API key cookie ile oturum acar).
 func (s *Server) handleTenant(w http.ResponseWriter, r *http.Request) {
-	// Tenant paneli API key ile kimlik dogrular (admin token degil).
 	apiKey := r.URL.Query().Get("key")
 	if apiKey == "" {
 		if c, err := r.Cookie("aetheris_tenant_key"); err == nil {
@@ -362,30 +376,31 @@ func (s *Server) handleTenant(w http.ResponseWriter, r *http.Request) {
 	s.serveFile(w, r, "tenant.html")
 }
 
-// handleTenantStatic, tenant statik varliklarini sunar.
+// handleTenantStatic, tenant statik varliklarini sunar. Madde 3: fail-closed —
+// gecerli tenant anahtari olmadan varlik sunulmaz.
 func (s *Server) handleTenantStatic(w http.ResponseWriter, r *http.Request) {
+	apiKey := r.URL.Query().Get("key")
+	if apiKey == "" {
+		if c, err := r.Cookie("aetheris_tenant_key"); err == nil {
+			apiKey = c.Value
+		}
+	}
+	if apiKey == "" || !s.validTenantKey(apiKey) {
+		http.Redirect(w, r, "/tenant", http.StatusFound)
+		return
+	}
 	name := strings.TrimPrefix(r.URL.Path, "/tenant/")
-	if name == "" {
+	if name == "" || strings.Contains(name, "..") {
 		name = "tenant.html"
 	}
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
 	w.Header().Set("ETag", `"`+AssetVersion+`"`)
 	data, err := fs.ReadFile(s.staticFS, name)
 	if err != nil {
-		// tenant.html yoksa index'e yonlendir.
 		http.Redirect(w, r, "/tenant", http.StatusFound)
 		return
 	}
-	ctype := "text/plain"
-	switch {
-	case strings.HasSuffix(name, ".html"):
-		ctype = "text/html; charset=utf-8"
-	case strings.HasSuffix(name, ".css"):
-		ctype = "text/css"
-	case strings.HasSuffix(name, ".js"):
-		ctype = "application/javascript"
-	}
-	w.Header().Set("Content-Type", ctype)
+	w.Header().Set("Content-Type", contentType(name))
 	_, _ = w.Write(data)
 }
 
@@ -436,43 +451,10 @@ func (s *Server) handleTenantWS(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// filterCredits, API key'e gore kredi satirlarini filtreler.
-func filterCredits(rows []CreditRow, apiKey string) []CreditRow {
-	var out []CreditRow
-	for _, r := range rows {
-		if r.ClientID == apiKey || strings.HasPrefix(r.ClientID, apiKey[:min(8, len(apiKey))]) {
-			out = append(out, r)
-		}
-	}
-	return out
-}
+// NOT: validTenantKey ve filterCredits'in GUVENLI surumleri commerce.go
+// icinde tanimlidir (madde 1 & 2). Bu dosyada TEKRAR tanimlanmazlar.
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-// validTenantKey, API anahtarinin gecerli olup olmadigini kontrol eder.
-// Config'deki AETHERIS_API_KEYS listesiyle karsilastirir.
-func (s *Server) validTenantKey(key string) bool {
-	if key == "" {
-		return false
-	}
-	// AdminToken ile eslesen anahtarlar her zaman gecerlidir.
-	if constTimeEq(key, s.cfg.AdminToken) {
-		return true
-	}
-	// API anahtari formati: "clientid:secret" — secret kismi karsilastirilir.
-	if idx := strings.Index(key, ":"); idx > 0 {
-		return len(key[idx+1:]) >= 16 // en az 16 karakter secret
-	}
-	return len(key) >= 16
-}
-
-// constTimeEq, iki jetonu sabit zamanda karsilastirir (zamanlama saldirisi
-// yuzeyi olmadan).
+// constTimeEq, iki jetonu sabit zamanda karsilastirir.
 func constTimeEq(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
@@ -487,6 +469,12 @@ func contentType(name string) string {
 		return "application/javascript; charset=utf-8"
 	case strings.HasSuffix(name, ".json"):
 		return "application/json; charset=utf-8"
+	case strings.HasSuffix(name, ".png"):
+		return "image/png"
+	case strings.HasSuffix(name, ".svg"):
+		return "image/svg+xml"
+	case strings.HasSuffix(name, ".webmanifest"):
+		return "application/manifest+json"
 	default:
 		return "application/octet-stream"
 	}
