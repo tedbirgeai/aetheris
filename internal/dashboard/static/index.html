@@ -2,107 +2,194 @@
 <html lang="tr">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>AETHERIS — Control Plane</title>
-  <link rel="stylesheet" href="/admin/style.css?v=v0.7a-slate">
+  <link rel="stylesheet" href="/admin/style.css?v=v1.0.0">
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <span class="logo">◈</span>
-      <div class="brand-text">
-        <span class="title">AETHERIS</span>
-        <span class="sub">Control Plane · v0.7a-global</span>
-      </div>
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-icon">◈</div>
+    <div class="brand-text">
+      <span class="brand-name">AETHERIS</span>
+      <span class="brand-sub">Control Plane · v1.0.0</span>
     </div>
-    <div class="conn">
-      <span id="conn-dot" class="dot off"></span>
-      <span id="conn-text">bağlanıyor…</span>
+  </div>
+  <div class="topbar-right">
+    <div class="carrier-pill" id="carrier-pill">
+      <span class="carrier-dot"></span>
+      <span id="carrier-label">—</span>
     </div>
-  </header>
+    <div class="conn-status">
+      <span class="dot" id="conn-dot"></span>
+      <span id="conn-text">bağlanıyor</span>
+    </div>
+  </div>
+</header>
 
-  <main>
-    <!-- WAN durumu hero -->
-    <section class="hero">
-      <div class="hero-left">
-        <div class="hero-label">WAN STATUS</div>
-        <div id="wan-badge" class="wan-badge wan-unknown">
-          <span class="wan-dot"></span>
-          <span id="wan-text">—</span>
+<main>
+  <!-- WAN Hero -->
+  <section class="wan-hero" id="wan-hero">
+    <div class="wan-hero-left">
+      <div class="wan-micro-label">WAN STATUS</div>
+      <div class="wan-badge" id="wan-badge">
+        <span class="wan-pulse" id="wan-pulse"></span>
+        <span id="wan-text">—</span>
+      </div>
+      <div class="wan-meta" id="wan-meta"></div>
+    </div>
+    <div class="wan-hero-right">
+      <div class="metric-trio">
+        <div class="metric-item">
+          <div class="metric-k">AKTİF TÜNEL</div>
+          <div class="metric-v" id="hero-tunnels">0</div>
+        </div>
+        <div class="metric-sep"></div>
+        <div class="metric-item">
+          <div class="metric-k">ORT. RTT</div>
+          <div class="metric-v" id="hero-rtt">—</div>
+        </div>
+        <div class="metric-sep"></div>
+        <div class="metric-item">
+          <div class="metric-k">TAŞIYICI</div>
+          <div class="metric-v" id="hero-carrier">—</div>
         </div>
       </div>
-      <div class="hero-meta">
-        <div class="hm-item"><span class="hm-k">Aktif Taşıyıcı</span><span class="hm-v" id="carrier">—</span></div>
-        <div class="hm-item"><span class="hm-k">Aktif Tünel</span><span class="hm-v" id="tunnels">—</span></div>
-        <div class="hm-item"><span class="hm-k">Ort. RTT</span><span class="hm-v" id="rtt">—</span></div>
-      </div>
-    </section>
+    </div>
+  </section>
 
-    <!-- metrik kartlari -->
-    <section class="cards">
-      <div class="card">
-        <div class="card-label">Bant Genişliği</div>
-        <div class="card-value" id="throughput">—</div>
-        <div class="card-unit">anlık geçiş hızı</div>
+  <!-- Taşıyıcı Boru Hattı -->
+  <section class="carrier-pipeline">
+    <div class="pipeline-label">TAŞIYICI BORU HATTI — Öncelik Sırası</div>
+    <div class="pipeline-track" id="pipeline-track">
+      <div class="pipeline-item" data-kind="ethernet">
+        <div class="pi-icon">⬡</div>
+        <div class="pi-name">Ethernet GbE</div>
+        <div class="pi-status stub">—</div>
       </div>
-      <div class="card">
-        <div class="card-label">WAL Kuyruk Derinliği</div>
-        <div class="card-value" id="wal-depth">—</div>
-        <div class="card-unit">bekleyen kayıt</div>
+      <div class="pipeline-arrow">→</div>
+      <div class="pipeline-item" data-kind="wifi_wan">
+        <div class="pi-icon">⟁</div>
+        <div class="pi-name">Wi-Fi WAN</div>
+        <div class="pi-status stub">—</div>
       </div>
-      <div class="card">
-        <div class="card-label">Disk Kullanımı</div>
-        <div class="card-value" id="disk">—</div>
-        <div class="card-unit">kalıcı depo</div>
+      <div class="pipeline-arrow">→</div>
+      <div class="pipeline-item" data-kind="wigig">
+        <div class="pi-icon">⚡</div>
+        <div class="pi-name">WiGig 60GHz</div>
+        <div class="pi-status stub">—</div>
       </div>
-      <div class="card">
-        <div class="card-label">Keşfedilen Düğüm</div>
-        <div class="card-value" id="nodecount">—</div>
-        <div class="card-unit">mesh topolojisi</div>
+      <div class="pipeline-arrow">→</div>
+      <div class="pipeline-item" data-kind="fso">
+        <div class="pi-icon">◉</div>
+        <div class="pi-name">FSO Lazer</div>
+        <div class="pi-status stub">—</div>
       </div>
-      <div class="card">
-        <div class="card-label">SOCKS5 Aktif</div>
-        <div class="card-value" id="socks5-active">—</div>
-        <div class="card-unit">açık bağlantı</div>
+      <div class="pipeline-arrow">→</div>
+      <div class="pipeline-item" data-kind="halow">
+        <div class="pi-icon">◎</div>
+        <div class="pi-name">HaLow 802.11ah</div>
+        <div class="pi-status stub">—</div>
       </div>
-      <div class="card">
-        <div class="card-label">DTN Kuyruk</div>
-        <div class="card-value" id="dtn-pending">—</div>
-        <div class="card-unit">bekleyen bundle</div>
+      <div class="pipeline-arrow">→</div>
+      <div class="pipeline-item" data-kind="tvws">
+        <div class="pi-icon">📡</div>
+        <div class="pi-name">TVWS 470-790MHz</div>
+        <div class="pi-status stub">—</div>
       </div>
-    </section>
+      <div class="pipeline-arrow">→</div>
+      <div class="pipeline-item" data-kind="lora">
+        <div class="pi-icon">∿</div>
+        <div class="pi-name">LoRa 868MHz</div>
+        <div class="pi-status stub">—</div>
+      </div>
+    </div>
+  </section>
 
-    <section class="grid">
-      <div class="panel">
-        <div class="panel-head">
-          <h2>Canlı Mesh Topolojisi</h2>
-          <span class="panel-tag">gossip · zero-conf</span>
+  <!-- Metrik Kartları -->
+  <section class="metrics-grid">
+    <div class="mcard">
+      <div class="mcard-label">BANT GENİŞLİĞİ</div>
+      <div class="mcard-value" id="m-bw">0 B/s</div>
+      <div class="mcard-bar"><div class="mcard-fill" id="bw-fill" style="width:0%"></div></div>
+    </div>
+    <div class="mcard">
+      <div class="mcard-label">WAL KUYRUK</div>
+      <div class="mcard-value" id="m-wal">0</div>
+      <div class="mcard-sub">bekleyen kayıt</div>
+    </div>
+    <div class="mcard">
+      <div class="mcard-label">DİSK KULLANIMI</div>
+      <div class="mcard-value" id="m-disk">0 B</div>
+      <div class="mcard-sub">kalıcı depo</div>
+    </div>
+    <div class="mcard">
+      <div class="mcard-label">KEŞF. DÜĞÜM</div>
+      <div class="mcard-value" id="m-nodes">0</div>
+      <div class="mcard-sub">mesh topolojisi</div>
+    </div>
+    <div class="mcard mcard-accent">
+      <div class="mcard-label">SOCKS5 AKTİF</div>
+      <div class="mcard-value" id="m-socks5">—</div>
+      <div class="mcard-sub">açık bağlantı</div>
+    </div>
+    <div class="mcard mcard-accent">
+      <div class="mcard-label">DTN KUYRUK</div>
+      <div class="mcard-value" id="m-dtn">—</div>
+      <div class="mcard-sub">bekleyen bundle</div>
+    </div>
+  </section>
+
+  <!-- Alt Grid -->
+  <section class="bottom-grid">
+    <!-- Mesh Topolojisi -->
+    <div class="bpanel">
+      <div class="bpanel-head">
+        <h2>Canlı Mesh Topolojisi</h2>
+        <div class="bpanel-tags">
+          <span class="tag tag-green">GOSSIP</span>
+          <span class="tag tag-blue">ZERO-CONF</span>
         </div>
-        <canvas id="topo" width="560" height="340"></canvas>
-        <table class="data-table">
-          <thead><tr><th>Düğüm</th><th>Taşıyıcı</th><th>RTT</th><th>Durum</th></tr></thead>
-          <tbody id="node-rows"></tbody>
-        </table>
       </div>
+      <canvas id="topo-canvas" width="520" height="280"></canvas>
+      <table class="data-table" id="node-table">
+        <thead>
+          <tr><th>Düğüm</th><th>Taşıyıcı</th><th>RTT</th><th>Durum</th></tr>
+        </thead>
+        <tbody id="node-rows"></tbody>
+      </table>
+    </div>
 
-      <div class="panel">
-        <div class="panel-head">
-          <h2>Faturalama / Kredi Hareketi</h2>
-          <span class="panel-tag">zero-knowledge</span>
+    <!-- Sağ Kolon -->
+    <div class="right-col">
+      <!-- Bant genişliği sparkline -->
+      <div class="bpanel bpanel-sm">
+        <div class="bpanel-head">
+          <h2>Bant Genişliği Geçmişi</h2>
+          <span class="tag tag-muted">60sn</span>
+        </div>
+        <canvas id="bw-canvas" width="340" height="100"></canvas>
+      </div>
+      <!-- Faturalama -->
+      <div class="bpanel bpanel-sm">
+        <div class="bpanel-head">
+          <h2>Faturalama / Kredi</h2>
+          <span class="tag tag-purple">ZERO-KNOWLEDGE</span>
         </div>
         <table class="data-table">
           <thead><tr><th>İstemci</th><th>Bayt</th></tr></thead>
           <tbody id="credit-rows"></tbody>
         </table>
-        <div class="meta">Son güncelleme: <span id="ts">—</span></div>
+        <div class="ts-label">Son güncelleme: <span id="ts">—</span></div>
       </div>
-    </section>
-  </main>
+    </div>
+  </section>
+</main>
 
-  <footer>
-    Zero-Knowledge · yalnızca payload SHA-256 + bayt sayımı · Zero-KVKK RF framing · tek binary · %100 off-grid (sıfır CDN)
-  </footer>
+<footer>
+  Zero-Knowledge · Zero-KVKK RF Framing · %100 Off-Grid · Sıfır CDN · AES-256-GCM
+</footer>
 
-  <script src="/admin/app.js?v=v0.7a-slate"></script>
+<script src="/admin/app.js?v=v1.0.0"></script>
 </body>
 </html>

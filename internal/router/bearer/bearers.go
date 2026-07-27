@@ -66,12 +66,25 @@ func (b *HardwareStubBearer) Probe(_ context.Context) (float64, error) {
 // surucu ile degistir.
 func DefaultBearers(wanTargets []string) []Bearer {
 	return []Bearer{
+		// 1. Ethernet GbE — en hızlı, en kararlı
 		NewTCPBearer(KindEthernet, wanTargets),
+		// 2. WiFi WAN — standart kablosuz
 		NewTCPBearer(KindWiFiWAN, wanTargets),
+		// 3. WiGig 60GHz — ultra hız, 100-300m (lisanssız)
+		NewHardwareStub(KindWiGig60GHz, "WiGig 60GHz: 802.11ad/ay chip surucu gerekli (Qualcomm/Intel)"),
+		// 4. FSO Lazer — bina-bina 1Gbps, lisanssız
+		NewHardwareStub(KindFSO, "FSO lazer: optik birim gerekli (Lightpointe/GeoDesy)"),
+		// 5. USB Tethering — telefon paylaşımı
 		NewHardwareStub(KindUSBTethering, "USB tethering: platform-spesifik ag API gerekli"),
+		// 6. HaLow 802.11ah — 1-2km sub-GHz WiFi (lisanssız)
 		NewHardwareStub(KindHaLow, "Wi-Fi HaLow 802.11ah: Morse Micro/Newracom chip surucu gerekli"),
-		NewHardwareStub(KindSoftAPMesh, "SoftAP: Wi-Fi chip surucu + OS ag API gerekli"),
+		// 7. TVWS 470-790MHz — 10-100km, binalara girer (lisanssız)
+		NewHardwareStub(KindTVWS, "TVWS: RTL-SDR dongle + GNU Radio / BTK kanal DB gerekli"),
+		// 8. LoRa USB — 2-10km, 150kbps (lisanssız)
 		NewHardwareStub(KindLoRaUSB, "LoRa USB: SX1262 dongle + seri surucu gerekli"),
+		// 9. SoftAP Mesh — yerel WiFi dağıtımı
+		NewHardwareStub(KindSoftAPMesh, "SoftAP: Wi-Fi chip surucu + OS ag API gerekli"),
+		// 10. BLE Mesh — son metre, düşük hız
 		NewHardwareStub(KindBLEMesh, "BLE Mesh: Bluetooth chip surucu gerekli"),
 	}
 }
