@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>AETHERIS — Tenant Portal</title>
+  <style>
+    :root{--bg:#0b1120;--glass:rgba(255,255,255,.06);--glass-b:rgba(255,255,255,.12);--border:rgba(255,255,255,.1);--text:#e2e8f0;--muted:#94a3b8;--faint:#475569;--green:#10b981;--blue:#3b82f6;--amber:#f59e0b;--red:#ef4444;--purple:#a78bfa;--mono:ui-monospace,"JetBrains Mono",Menlo,monospace;--sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;min-height:100vh;background-image:radial-gradient(ellipse at 20% 20%,rgba(59,130,246,.08) 0,transparent 50%),radial-gradient(ellipse at 80% 80%,rgba(167,139,250,.06) 0,transparent 50%)}
+    /* Glassmorphism */
+    .glass{background:var(--glass);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid var(--border);border-radius:16px}
+    /* Topbar */
+    .topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 28px;border-bottom:1px solid var(--border);background:rgba(11,17,32,.8);backdrop-filter:blur(24px);position:sticky;top:0;z-index:10}
+    .brand{display:flex;align-items:center;gap:10px}.logo{color:var(--purple);font-size:20px}
+    .brand-text .title{font-weight:700;letter-spacing:2px;font-size:14px}.brand-text .sub{color:var(--muted);font-size:11px}
+    .conn-row{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--muted)}
+    .dot{width:8px;height:8px;border-radius:50%;display:inline-block}.dot.on{background:var(--green);box-shadow:0 0 8px var(--green)}.dot.off{background:var(--red)}
+    .key-badge{font-family:var(--mono);font-size:11px;background:rgba(167,139,250,.1);color:var(--purple);padding:3px 10px;border-radius:999px;border:1px solid rgba(167,139,250,.25)}
+    /* Ana içerik */
+    main{max-width:1100px;margin:0 auto;padding:28px 24px 60px}
+    /* Hero kota */
+    .quota-hero{padding:24px 28px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px}
+    .quota-left .label{color:var(--faint);font-size:11px;letter-spacing:2px;margin-bottom:8px}
+    .quota-left .value{font-size:28px;font-weight:700;font-family:var(--mono)}
+    .quota-bar-wrap{flex:1;min-width:200px;max-width:320px}
+    .quota-bar-track{background:rgba(255,255,255,.08);border-radius:999px;height:8px;overflow:hidden;margin-top:8px}
+    .quota-bar-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--blue),var(--purple));transition:width .6s}
+    .quota-pct{font-size:11px;color:var(--muted);margin-top:4px;text-align:right}
+    /* Kartlar */
+    .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px}
+    .card{padding:18px 20px}.card-label{color:var(--muted);font-size:11px;letter-spacing:.5px;margin-bottom:10px}
+    .card-value{font-family:var(--mono);font-size:24px;font-weight:700}
+    .card-unit{color:var(--faint);font-size:11px;margin-top:6px}
+    /* Grafik */
+    .grid2{display:grid;grid-template-columns:1.3fr 1fr;gap:18px}
+    .panel{padding:20px 22px}.panel-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+    .panel h2{font-size:13px;font-weight:600;letter-spacing:.3px}
+    .panel-tag{color:var(--faint);font-size:10px;letter-spacing:1px;border:1px solid var(--border);padding:3px 8px;border-radius:999px}
+    /* Sparkline */
+    canvas#bw-chart{width:100%;height:120px;display:block}
+    /* Tablo */
+    .tbl{width:100%;border-collapse:collapse;font-size:12px}
+    .tbl th{color:var(--faint);font-weight:500;font-size:10px;letter-spacing:.5px;padding:8px 10px;border-bottom:1px solid var(--border);text-align:left}
+    .tbl td{padding:9px 10px;border-bottom:1px solid rgba(71,85,105,.3);font-family:var(--mono)}
+    .tbl tr:last-child td{border-bottom:none}
+    .pill{padding:2px 8px;border-radius:999px;font-size:10px;font-family:var(--sans)}
+    .pill-ok{background:rgba(16,185,129,.12);color:var(--green)}.pill-warn{background:rgba(245,158,11,.12);color:var(--amber)}
+    /* SOCKS5 + DTN durum rozetleri */
+    .status-row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px}
+    .status-badge{padding:8px 16px;border-radius:12px;display:flex;align-items:center;gap:8px;font-size:12px}
+    .sb-socks5{background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.25)}.sb-socks5 .icon{color:var(--blue)}
+    .sb-dtn{background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.25)}.sb-dtn .icon{color:var(--amber)}
+    .sb-wan{background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.25)}.sb-wan .icon{color:var(--green)}
+    footer{text-align:center;color:var(--faint);font-size:11px;padding:16px;border-top:1px solid var(--border);margin-top:30px}
+    @media(max-width:768px){.cards{grid-template-columns:repeat(2,1fr)}.grid2{grid-template-columns:1fr}.status-row{flex-direction:column}}
+  </style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">◈</span>
+    <div class="brand-text"><div class="title">AETHERIS</div><div class="sub">Tenant Portal · v0.8a</div></div>
+  </div>
+  <div class="conn-row">
+    <span class="key-badge" id="key-display">—</span>
+    <span class="dot off" id="conn-dot"></span>
+    <span id="conn-text">bağlanıyor…</span>
+  </div>
+</header>
+
+<main>
+  <!-- Durum rozetleri -->
+  <div class="status-row">
+    <div class="status-badge sb-wan"><span class="icon">●</span><span id="wan-status-t">WAN: —</span></div>
+    <div class="status-badge sb-socks5"><span class="icon">⟳</span>SOCKS5 Aktif: <strong id="socks5-active">—</strong></div>
+    <div class="status-badge sb-dtn"><span class="icon">⌛</span>DTN Kuyruk: <strong id="dtn-pending">—</strong></div>
+  </div>
+
+  <!-- Kota hero -->
+  <div class="quota-hero glass">
+    <div class="quota-left">
+      <div class="label">BANT GENİŞLİĞİ KULLANIMI</div>
+      <div class="card-value"><span id="bw-used">0</span> <span style="font-size:14px;color:var(--muted)">B</span></div>
+    </div>
+    <div class="quota-bar-wrap">
+      <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted)"><span>Kullanılan</span><span>Kota</span></div>
+      <div class="quota-bar-track"><div class="quota-bar-fill" id="quota-fill" style="width:0%"></div></div>
+      <div class="quota-pct" id="quota-pct">%0</div>
+    </div>
+  </div>
+
+  <!-- Metrik kartları -->
+  <div class="cards">
+    <div class="card glass"><div class="card-label">AKTİF TÜNEL</div><div class="card-value" id="t-tunnels">0</div><div class="card-unit">eş zamanlı bağlantı</div></div>
+    <div class="card glass"><div class="card-label">WAL DERİNLİĞİ</div><div class="card-value" id="t-wal">0</div><div class="card-unit">bekleyen kayıt</div></div>
+    <div class="card glass"><div class="card-label">ANLK. BANT</div><div class="card-value" id="t-bw">0 B/s</div><div class="card-unit">geçiş hızı</div></div>
+    <div class="card glass"><div class="card-label">KAZANILAN KREDİ</div><div class="card-value" id="t-credit">0</div><div class="card-unit">relay birimi</div></div>
+  </div>
+
+  <div class="grid2">
+    <!-- Bant genişliği sparkline -->
+    <div class="panel glass">
+      <div class="panel-head"><h2>Bant Genişliği Geçmişi</h2><span class="panel-tag">canlı · 60sn</span></div>
+      <canvas id="bw-chart" width="560" height="120"></canvas>
+    </div>
+    <!-- WAL geçmişi / kredi tablosu -->
+    <div class="panel glass">
+      <div class="panel-head"><h2>Kredi Hareketleri</h2><span class="panel-tag">zero-knowledge</span></div>
+      <table class="tbl">
+        <thead><tr><th>İstemci</th><th>Bayt</th><th>Durum</th></tr></thead>
+        <tbody id="credit-body"></tbody>
+      </table>
+      <div style="color:var(--muted);font-size:11px;margin-top:12px">Son: <span id="t-ts">—</span></div>
+    </div>
+  </div>
+</main>
+<footer>AETHERIS Tenant Portal · Zero-Knowledge · %100 Off-Grid · <span id="node-id-f">—</span></footer>
+
+<script>
+(function(){
+  "use strict";
+  var bwHistory = Array(60).fill(0);
+  var totalRx = 0;
+  var QUOTA = 10*1024*1024*1024; // varsayılan 10GB
+
+  function qs(id){ return document.getElementById(id); }
+  function setText(id, v){ var el=qs(id); if(el) el.textContent=v; }
+  function fmtBytes(n){
+    n=Number(n)||0;
+    var u=["B","KB","MB","GB","TB"],i=0;
+    while(n>=1024&&i<u.length-1){n/=1024;i++;}
+    return (i===0?n:n.toFixed(1))+" "+u[i];
+  }
+
+  // API key'i URL'den al
+  var params=new URLSearchParams(location.search);
+  var apiKey=params.get("key")||"";
+  if(apiKey){ setText("key-display", apiKey.slice(0,8)+"…"); }
+
+  function render(d){
+    setText("t-tunnels", d.active_tunnels||0);
+    setText("t-wal", d.wal_depth||0);
+    var bps=d.throughput_bps||0;
+    setText("t-bw", fmtBytes(bps)+"/s");
+    totalRx += bps;
+    setText("bw-used", fmtBytes(totalRx));
+
+    // Kota çubuğu
+    var pct=Math.min(100,(totalRx/QUOTA*100)).toFixed(1);
+    var fill=qs("quota-fill"); if(fill) fill.style.width=pct+"%";
+    setText("quota-pct", "%"+pct);
+
+    // Kredi
+    var credits=d.credits||[];
+    var total=credits.reduce(function(s,r){return s+(r.units||0);},0);
+    setText("t-credit", total);
+
+    // WAN
+    var wanLabel=d.wan_label||"—";
+    if(d.exit_peer) wanLabel+=" ("+d.exit_peer+")";
+    setText("wan-status-t", "WAN: "+wanLabel);
+
+    // SOCKS5 + DTN
+    if(d.socks5){ setText("socks5-active", d.socks5.active); }
+    if(d.dtn){ setText("dtn-pending", d.dtn.pending); }
+
+    setText("t-ts", d.ts?new Date(d.ts*1000).toLocaleTimeString():"—");
+
+    // Kredi tablosu
+    var tb=qs("credit-body"); if(!tb) return;
+    tb.innerHTML="";
+    credits.forEach(function(r){
+      var tr=document.createElement("tr");
+      tr.innerHTML="<td>"+esc(r.client_id)+"</td><td>"+fmtBytes(r.bytes||0)+"</td><td><span class='pill "+(r.bytes>0?"pill-ok":"pill-warn")+"'>"+(r.bytes>0?"aktif":"bekliyor")+"</span></td>";
+      tb.appendChild(tr);
+    });
+    if(!credits.length) tb.innerHTML="<tr><td colspan='3' style='color:var(--faint)'>kayıt yok</td></tr>";
+
+    // Sparkline
+    bwHistory.push(bps); bwHistory.shift();
+    drawSparkline();
+  }
+
+  function drawSparkline(){
+    var cv=qs("bw-chart"); if(!cv||!cv.getContext) return;
+    var ctx=cv.getContext("2d"), W=cv.width, H=cv.height;
+    ctx.clearRect(0,0,W,H);
+    var max=Math.max(1,...bwHistory);
+    var step=W/bwHistory.length;
+    ctx.beginPath();
+    ctx.strokeStyle="#3b82f6"; ctx.lineWidth=2;
+    ctx.fillStyle="rgba(59,130,246,.12)";
+    ctx.moveTo(0,H);
+    bwHistory.forEach(function(v,i){
+      var x=i*step, y=H-(v/max)*H*0.85;
+      if(i===0) ctx.lineTo(x,y); else ctx.lineTo(x,y);
+    });
+    ctx.lineTo(W,H);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
+
+  function esc(s){ return String(s||"").replace(/[&<>]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;"}[c];}); }
+
+  function connect(){
+    var proto=location.protocol==="https:"?"wss:":"ws:";
+    var ws=new WebSocket(proto+"//"+location.host+"/api/v1/ws/tenant?key="+encodeURIComponent(apiKey));
+    ws.onopen=function(){ qs("conn-dot").className="dot on"; setText("conn-text","canlı · tenant akışı"); };
+    ws.onclose=function(){ qs("conn-dot").className="dot off"; setText("conn-text","yeniden bağlanıyor…"); setTimeout(connect,2500); };
+    ws.onmessage=function(ev){ try{render(JSON.parse(ev.data));}catch(e){} };
+  }
+  connect();
+})();
+</script>
+</body>
+</html>

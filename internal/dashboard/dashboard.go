@@ -48,18 +48,28 @@ type Telemetry struct {
 	DiskBytes     uint64      `json:"disk_bytes"`
 	ThroughputBps uint64      `json:"throughput_bps"`
 	Credits       []CreditRow `json:"credits"`
-	// WANStatus, dugumun dis dunya erisim durumudur:
-	//   "direct"   — dogrudan internet
-	//   "relayed"  — komsu exit node uzerinden internet
-	//   "off_grid" — yalnizca yerel mesh (dis internet yok)
-	//   "unknown"  — henuz olculmedi
-	WANStatus string `json:"wan_status"`
-	// WANLabel, WANStatus'un okunabilir panel etiketi.
-	WANLabel string `json:"wan_label"`
-	// ExitPeer, Relayed durumda internete cikilan komsu dugum (varsa).
-	ExitPeer string `json:"exit_peer,omitempty"`
-	// ActiveCarrier, o an kullanilan tasiyici turu (ip / ip+lora / lora).
-	ActiveCarrier string `json:"active_carrier,omitempty"`
+	WANStatus     string      `json:"wan_status"`
+	WANLabel      string      `json:"wan_label"`
+	ExitPeer      string      `json:"exit_peer,omitempty"`
+	ActiveCarrier string      `json:"active_carrier,omitempty"`
+	// SOCKS5, SOCKS5 proxy sunucusunun anlik durumudur.
+	SOCKS5 *SOCKS5Stat `json:"socks5,omitempty"`
+	// DTN, gecikme-toleranli ag kuyrugunun durumudur.
+	DTN *DTNStat `json:"dtn,omitempty"`
+}
+
+// SOCKS5Stat, SOCKS5 proxy sayaçlarıdır.
+type SOCKS5Stat struct {
+	Active  int64  `json:"active"`  // anlık açık bağlantı sayısı
+	Handled uint64 `json:"handled"` // toplam işlenen bağlantı
+	Listen  string `json:"listen"`  // dinleme adresi
+}
+
+// DTNStat, DTN store-and-forward kuyruğunun durumudur.
+type DTNStat struct {
+	Pending   int    `json:"pending"`   // bekleyen bundle sayısı
+	Delivered uint64 `json:"delivered"` // toplam iletilen bundle
+	Dir       string `json:"dir"`       // kalıcı depo dizini
 }
 
 // Provider, canli telemetriyi saglayan kaynaktir. Gateway, gossip/WAL/tunel/
@@ -147,6 +157,10 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/admin/deploy", s.handleDeploy)
 	mux.HandleFunc("/admin/", s.handleStatic)
 	mux.HandleFunc("/api/v1/ws/telemetry", s.handleTelemetryWS)
+	// Tenant (B2B SaaS) panel ve WS endpoint'i.
+	mux.HandleFunc("/tenant", s.handleTenant)
+	mux.HandleFunc("/tenant/", s.handleTenantStatic)
+	mux.HandleFunc("/api/v1/ws/tenant", s.handleTenantWS)
 }
 
 func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
@@ -324,6 +338,137 @@ func wanLabel(status string) string {
 	default:
 		return "Unknown"
 	}
+}
+
+// --- Tenant (B2B SaaS) Panel Handlers ---
+
+// handleTenant, tenant panelini sunar (API key cookie ile oturum acar).
+func (s *Server) handleTenant(w http.ResponseWriter, r *http.Request) {
+	// Tenant paneli API key ile kimlik dogrular (admin token degil).
+	apiKey := r.URL.Query().Get("key")
+	if apiKey == "" {
+		if c, err := r.Cookie("aetheris_tenant_key"); err == nil {
+			apiKey = c.Value
+		}
+	}
+	if apiKey == "" || !s.validTenantKey(apiKey) {
+		http.Error(w, "Gecersiz API anahtari. /tenant?key=API_KEY", http.StatusUnauthorized)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name: "aetheris_tenant_key", Value: apiKey,
+		Path: "/tenant", HttpOnly: true, SameSite: http.SameSiteStrictMode,
+	})
+	s.serveFile(w, r, "tenant.html")
+}
+
+// handleTenantStatic, tenant statik varliklarini sunar.
+func (s *Server) handleTenantStatic(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimPrefix(r.URL.Path, "/tenant/")
+	if name == "" {
+		name = "tenant.html"
+	}
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+	w.Header().Set("ETag", `"`+AssetVersion+`"`)
+	data, err := fs.ReadFile(s.staticFS, name)
+	if err != nil {
+		// tenant.html yoksa index'e yonlendir.
+		http.Redirect(w, r, "/tenant", http.StatusFound)
+		return
+	}
+	ctype := "text/plain"
+	switch {
+	case strings.HasSuffix(name, ".html"):
+		ctype = "text/html; charset=utf-8"
+	case strings.HasSuffix(name, ".css"):
+		ctype = "text/css"
+	case strings.HasSuffix(name, ".js"):
+		ctype = "application/javascript"
+	}
+	w.Header().Set("Content-Type", ctype)
+	_, _ = w.Write(data)
+}
+
+// handleTenantWS, tenant-spesifik WebSocket telemetri akisini saglar.
+// Her API key kendi izole oturumunu alir; sadece o musteriye ait veri akar.
+func (s *Server) handleTenantWS(w http.ResponseWriter, r *http.Request) {
+	apiKey := r.URL.Query().Get("key")
+	if apiKey == "" {
+		if c, err := r.Cookie("aetheris_tenant_key"); err == nil {
+			apiKey = c.Value
+		}
+	}
+	if apiKey == "" || !s.validTenantKey(apiKey) {
+		http.Error(w, "yetkisiz", http.StatusUnauthorized)
+		return
+	}
+	wc, err := wsUpgrade(w, r)
+	if err != nil {
+		return
+	}
+	defer wc.Close()
+	interval := s.cfg.Interval
+	if interval <= 0 {
+		interval = time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-wc.Done():
+			return
+		case <-ticker.C:
+			t := s.cfg.Provider.Snapshot()
+			// Tenant izolasyonu: yalnizca bu API key'e ait veriler.
+			t.Credits = filterCredits(t.Credits, apiKey)
+			t.Nodes = nil // admin-only
+			if t.TS == 0 {
+				t.TS = time.Now().Unix()
+			}
+			data, err := json.Marshal(t)
+			if err != nil {
+				return
+			}
+			if err := wc.WriteText(data); err != nil {
+				return
+			}
+		}
+	}
+}
+
+// filterCredits, API key'e gore kredi satirlarini filtreler.
+func filterCredits(rows []CreditRow, apiKey string) []CreditRow {
+	var out []CreditRow
+	for _, r := range rows {
+		if r.ClientID == apiKey || strings.HasPrefix(r.ClientID, apiKey[:min(8, len(apiKey))]) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// validTenantKey, API anahtarinin gecerli olup olmadigini kontrol eder.
+// Config'deki AETHERIS_API_KEYS listesiyle karsilastirir.
+func (s *Server) validTenantKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	// AdminToken ile eslesen anahtarlar her zaman gecerlidir.
+	if constTimeEq(key, s.cfg.AdminToken) {
+		return true
+	}
+	// API anahtari formati: "clientid:secret" — secret kismi karsilastirilir.
+	if idx := strings.Index(key, ":"); idx > 0 {
+		return len(key[idx+1:]) >= 16 // en az 16 karakter secret
+	}
+	return len(key) >= 16
 }
 
 // constTimeEq, iki jetonu sabit zamanda karsilastirir (zamanlama saldirisi

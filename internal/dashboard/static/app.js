@@ -41,6 +41,9 @@
     setText("rtt", rtts.length ? (rtts.reduce(function (a, b) { return a + b; }, 0) / rtts.length).toFixed(1) + " ms" : "—");
 
     setText("ts", d.ts ? new Date(d.ts * 1000).toLocaleTimeString() : "—");
+    // SOCKS5 + DTN anlık durum kartları.
+    if (d.socks5) { setText("socks5-active", d.socks5.active); }
+    if (d.dtn)    { setText("dtn-pending",   d.dtn.pending);  }
     renderNodes(nodes);
     renderCredits(d.credits || []);
     drawTopology(nodes);
