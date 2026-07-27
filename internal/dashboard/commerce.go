@@ -114,6 +114,7 @@ func (s *Server) RegisterCommerceRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/admin/manifest.webmanifest", s.handleManifest)
 	mux.HandleFunc("/admin/sw.js", s.handleSW)
 	mux.HandleFunc("/kvkk", s.handleKVKK)
+	s.registerQNBRoutes(mux)
 }
 
 // ============================================================
