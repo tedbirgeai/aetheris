@@ -58,22 +58,33 @@ if [ -n "$BOOTSTRAP" ]; then
 fi
 
 # Başlatma betiği
+# start.sh icerigini olustur
+NODE_ID="edge-$(hostname 2>/dev/null || echo node)-$$"
+ADMIN_TOKEN=$(openssl rand -hex 16 2>/dev/null || cat /dev/urandom 2>/dev/null | head -c 16 | od -A n -t x1 | tr -d ' \n' || echo "flashtoken0000ab")
 cat > "$TARGET/start.sh" <<STARTEOF
 #!/usr/bin/env bash
-# AETHERIS Zero-Touch başlatma betiği — hiçbir konfigürasyon gerekmez.
+# AETHERIS Zero-Touch baslama - hicbir konfigurasyon gerekmez.
 DIR="\$(cd "\$(dirname "\$0")" && pwd)"
 export AETHERIS_FLASH_DIR="\$DIR"
+export AETHERIS_LISTEN="0.0.0.0:18080"
 export AETHERIS_ADMIN=true
-export AETHERIS_ADMIN_TOKEN="\${AETHERIS_ADMIN_TOKEN:-$(openssl rand -hex 16 2>/dev/null || head -c 16 /dev/urandom | xxd -p)}"
+export AETHERIS_ADMIN_TOKEN="${ADMIN_TOKEN}"
 export AETHERIS_MESH=true
+export AETHERIS_MESH_NODE_ID="${NODE_ID}"
+export AETHERIS_MESH_ADDR="0.0.0.0:7946"
 export AETHERIS_DISCOVERY=true
+export AETHERIS_DISCOVERY_PORT=17947
 export AETHERIS_WAN_CHECK=true
-export AETHERIS_API_KEYS="\${AETHERIS_API_KEYS:-flash:\$(cat /dev/urandom | head -c 16 | xxd -p 2>/dev/null || echo 'flashdefault0000')}"
+export AETHERIS_API_KEYS="flash:${ADMIN_TOKEN}0000000000000000"
 if [ "$EXIT_NODE" = "true" ]; then
   export AETHERIS_EXIT_NODE=true
 fi
-echo "AETHERIS v${VERSION} - Zero-Touch başlatılıyor..."
-echo "Admin token: \$AETHERIS_ADMIN_TOKEN"
+echo "============================================"
+echo " AETHERIS ${VERSION} - Zero-Touch Aktif"
+echo " Panel : http://127.0.0.1:18080/admin?token=${ADMIN_TOKEN}"
+echo " Tenant: http://127.0.0.1:18080/tenant?key=flash:${ADMIN_TOKEN}0000000000000000"
+echo " NodeID: ${NODE_ID}"
+echo "============================================"
 "\$DIR/aetheris-gateway"
 STARTEOF
 chmod +x "$TARGET/start.sh"
